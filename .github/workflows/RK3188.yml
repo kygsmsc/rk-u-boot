@@ -193,7 +193,7 @@ jobs:
           sed -i 's/CONFIG_DEFAULT_DEVICE_TREE="rk3188-radxarock"/CONFIG_DEFAULT_DEVICE_TREE="rk3188-sangfor-adesk"/g' configs/rk3188_defconfig 2>/dev/null || true
           sed -i 's/CONFIG_DEFAULT_DEVICE_TREE="rk3188-radxarock"/CONFIG_DEFAULT_DEVICE_TREE="rk3188-sangfor-adesk"/g' configs/rock_defconfig 2>/dev/null || true
 
-      # Step 4: 清理并编译 U-Boot（修复 Thumb 模式报错）
+      # Step 4: 清理、配置并编译 U-Boot（直接修改 .config 以解决 Thumb 报错）
       - name: Build U-Boot
         run: |
           export ARCH=arm
@@ -207,9 +207,17 @@ jobs:
             make rock_defconfig
           fi
 
-          # 【核心修复】强制禁用 Thumb 模式并启用 ARMv7，解决汇编报错
-          ./scripts/config --disable SYS_THUMB_BUILD
-          ./scripts/config --enable CPU_V7
+          # 【核心修复】直接修改 .config 文件，强制禁用 Thumb 模式并启用 ARMv7
+          # 注意：直接处理 .config 是最通用的方法，不需要 scripts/config 脚本
+          sed -i 's/CONFIG_SYS_THUMB_BUILD=y/# CONFIG_SYS_THUMB_BUILD is not set/g' .config
+          
+          # 如果 CONFIG_CPU_V7 被注释了，替换为 =y
+          sed -i 's/# CONFIG_CPU_V7 is not set/CONFIG_CPU_V7=y/g' .config
+          
+          # 如果 .config 里根本没有 CONFIG_CPU_V7 这行，则直接追加
+          grep -q "CONFIG_CPU_V7" .config || echo "CONFIG_CPU_V7=y" >> .config
+
+          # 重新生成配置以应用修改
           make olddefconfig
 
           # 编译 U-Boot
