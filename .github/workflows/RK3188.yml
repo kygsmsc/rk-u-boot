@@ -104,74 +104,47 @@ jobs:
           };
           EOF
 
-          # 追加 DTS 目标
           echo "" >> arch/arm/dts/Makefile
           echo "dtb-\$(CONFIG_ARCH_ROCKCHIP) += rk3188-sangfor-adesk.dtb" >> arch/arm/dts/Makefile
-          
-          # 修改默认 DTB
           sed -i 's/CONFIG_DEFAULT_DEVICE_TREE="rk3188-radxarock"/CONFIG_DEFAULT_DEVICE_TREE="rk3188-sangfor-adesk"/g' configs/rock_defconfig 2>/dev/null || true
 
-      - name: Build U-Boot (SPL only, skip dtoc)
+      - name: Build U-Boot (SPL only)
         run: |
           export ARCH=arm
           export CROSS_COMPILE=arm-linux-gnueabihf-
-          
+
           # 清理并配置
           make clean
           make rock_defconfig
-          
+
           # 修复 -march 架构参数
           sed -i 's/-march=armv5/-march=armv7-a/g' arch/arm/Makefile
           sed -i 's/-march=armv5/-march=armv7-a/g' Makefile
-          
-          # 强制禁用 TPL 和 SPL_OF_PLATDATA（彻底避免 dtoc 工具生成不兼容结构体）
-          # 方法1：直接关闭相关配置项
+
+          # 【核心修复】从源码层面删除旧版的 of-platdata 结构体引用
+          sed -i '/#if defined(CONFIG_ROCKCHIP_RK3188)/,/^#elif defined(CONFIG_ROCKCHIP_RK3288)/d' drivers/serial/serial_rockchip.c
+          echo "已删除 old serial_rockchip.c 代码块"
+
+          # 强制禁用 TPL 和 SPL_OF_PLATDATA 等特性
           sed -i 's/^CONFIG_TPL=y/# CONFIG_TPL is not set/g' .config
           sed -i 's/^CONFIG_SPL_OF_PLATDATA=y/# CONFIG_SPL_OF_PLATDATA is not set/g' .config
           sed -i 's/^CONFIG_TPL_OF_PLATDATA=y/# CONFIG_TPL_OF_PLATDATA is not set/g' .config
-          
-          # 方法2：清除任何可能存在的 of-platdata 标志
-          sed -i '/^CONFIG_SPL_OF_PLATDATA=/d' .config
-          sed -i '/^CONFIG_TPL_OF_PLATDATA=/d' .config
-          sed -i '/^CONFIG_OF_PLATDATA=/d' .config
-          
-          # 确保没有残留的 dtoc 配置项
-          grep -q "CONFIG_SPL_OF_PLATDATA" .config || echo "# CONFIG_SPL_OF_PLATDATA is not set" >> .config
-          grep -q "CONFIG_OF_PLATDATA" .config || echo "# CONFIG_OF_PLATDATA is not set" >> .config
-          
-          # 确保 CONFIG_SPL 开启
-          sed -i 's/# CONFIG_SPL is not set/CONFIG_SPL=y/g' .config
-          grep -q "CONFIG_SPL" .config || echo "CONFIG_SPL=y" >> .config
-          
-          # 配置 ARMv7 和禁用 Thumb
           sed -i 's/CONFIG_SYS_THUMB_BUILD=y/# CONFIG_SYS_THUMB_BUILD is not set/g' .config
           sed -i 's/# CONFIG_CPU_V7 is not set/CONFIG_CPU_V7=y/g' .config
           grep -q "CONFIG_CPU_V7" .config || echo "CONFIG_CPU_V7=y" >> .config
           sed -i 's/CONFIG_SYS_ARM_ARCH=5/CONFIG_SYS_ARM_ARCH=7/g' .config
-          
-          # 重新生成配置
+
+          # 确保 CONFIG_SPL 开启
+          sed -i 's/# CONFIG_SPL is not set/CONFIG_SPL=y/g' .config
+          grep -q "CONFIG_SPL" .config || echo "CONFIG_SPL=y" >> .config
+
           make olddefconfig
-          
-          # 彻底清理可能残留的 dtoc 生成文件
-          make mrproper
-          make rock_defconfig
-          
-          # 再次修改配置
-          sed -i 's/^CONFIG_TPL=y/# CONFIG_TPL is not set/g' .config
-          sed -i 's/^CONFIG_SPL_OF_PLATDATA=y/# CONFIG_SPL_OF_PLATDATA is not set/g' .config
-          sed -i 's/^CONFIG_TPL_OF_PLATDATA=y/# CONFIG_TPL_OF_PLATDATA is not set/g' .config
-          sed -i 's/CONFIG_SYS_THUMB_BUILD=y/# CONFIG_SYS_THUMB_BUILD is not set/g' .config
-          sed -i 's/# CONFIG_CPU_V7 is not set/CONFIG_CPU_V7=y/g' .config
-          sed -i 's/CONFIG_SYS_ARM_ARCH=5/CONFIG_SYS_ARM_ARCH=7/g' .config
-          
-          make olddefconfig
-          
-          # 只编译 SPL 和 U-Boot 主体，跳过 TPL 和 dtoc
+
+          # 编译 SPL 和 U-Boot 主体
           make -j$(nproc) spl/u-boot-spl.bin u-boot.bin
-          
-          # 列出产物
+
           ls -la spl/u-boot-spl.bin u-boot.bin u-boot-rockchip.bin 2>/dev/null || true
-          
+
       - name: Upload Artifacts
         uses: actions/upload-artifact@v4
         with:
