@@ -111,7 +111,7 @@ jobs:
           # 修改默认 DTB
           sed -i 's/CONFIG_DEFAULT_DEVICE_TREE="rk3188-radxarock"/CONFIG_DEFAULT_DEVICE_TREE="rk3188-sangfor-adesk"/g' configs/rock_defconfig 2>/dev/null || true
 
-      - name: Build U-Boot (SPL only)
+      - name: Build U-Boot (SPL only, skip dtoc)
         run: |
           export ARCH=arm
           export CROSS_COMPILE=arm-linux-gnueabihf-
@@ -120,23 +120,27 @@ jobs:
           make clean
           make rock_defconfig
           
-          # 修复 -march（只改 arch/arm/Makefile 和顶层 Makefile）
+          # 修复 -march 架构参数
           sed -i 's/-march=armv5/-march=armv7-a/g' arch/arm/Makefile
           sed -i 's/-march=armv5/-march=armv7-a/g' Makefile
           
-          # 修改 .config：禁用 TPL，避免 TPL 编译问题，同时确保 ARMv7
+          # 强制禁用 TPL 和 SPL_OF_PLATDATA（跳过 Python2 的 dtoc 工具）
+          sed -i 's/^CONFIG_TPL=y/# CONFIG_TPL is not set/g' .config
+          sed -i 's/^CONFIG_SPL_OF_PLATDATA=y/# CONFIG_SPL_OF_PLATDATA is not set/g' .config
+          grep -q "CONFIG_SPL_OF_PLATDATA" .config || echo "# CONFIG_SPL_OF_PLATDATA is not set" >> .config
+          # 确保 CONFIG_SPL 开启
+          sed -i 's/# CONFIG_SPL is not set/CONFIG_SPL=y/g' .config
+          grep -q "CONFIG_SPL" .config || echo "CONFIG_SPL=y" >> .config
+          
+          # 配置 ARMv7 和禁用 Thumb
           sed -i 's/CONFIG_SYS_THUMB_BUILD=y/# CONFIG_SYS_THUMB_BUILD is not set/g' .config
           sed -i 's/# CONFIG_CPU_V7 is not set/CONFIG_CPU_V7=y/g' .config
           grep -q "CONFIG_CPU_V7" .config || echo "CONFIG_CPU_V7=y" >> .config
           sed -i 's/CONFIG_SYS_ARM_ARCH=5/CONFIG_SYS_ARM_ARCH=7/g' .config
-          sed -i 's/^CONFIG_TPL=y/# CONFIG_TPL is not set/g' .config  # 禁用 TPL
-          # 确保 SPL 开启
-          sed -i 's/# CONFIG_SPL is not set/CONFIG_SPL=y/g' .config
-          grep -q "CONFIG_SPL" .config || echo "CONFIG_SPL=y" >> .config
           
           make olddefconfig
           
-          # 编译 SPL 和 U-Boot，不编译 TPL
+          # 只编译 SPL 和 U-Boot 主体，跳过 TPL 和 dtoc
           make -j$(nproc) spl/u-boot-spl.bin u-boot.bin
           
           # 列出产物
