@@ -189,7 +189,6 @@ jobs:
           EOF
 
           # 【关键修复】修复 armv5 编译报错：修改 arch/arm/Makefile
-          # 把 -march=armv5 替换为 -march=armv5te（新编译器需指定具体版本）
           sed -i 's/-march=armv5/-march=armv5te/g' arch/arm/Makefile
           echo "已修改 arch/arm/Makefile 以兼容新编译器。"
 
@@ -205,10 +204,12 @@ jobs:
         run: |
           export ARCH=arm
           export CROSS_COMPILE=arm-linux-gnueabihf-
-          make rock_defconfig
-          # 清理缓存，确保使用修改后的新参数编译
+          # 先清理缓存，确保使用修改后的新参数编译
           make clean
-          make -j$(nproc)
+          make rock_defconfig
+          # 【非常重要】Rockchip 官方仓库必须使用 make.sh 生成最终的 Loader 镜像
+          # make.sh 会在内部调用 make 并将镜像打包为 u-boot-rockchip.bin
+          ./make.sh rk3188
 
       # Step 5: 上传编译产物
       - name: Upload Build Artifacts
