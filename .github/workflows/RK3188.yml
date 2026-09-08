@@ -121,9 +121,9 @@ jobs:
           sed -i 's/-march=armv5/-march=armv7-a/g' arch/arm/Makefile
           sed -i 's/-march=armv5/-march=armv7-a/g' Makefile
 
-          # 【核心修复】从源码层面删除旧版的 of-platdata 结构体引用
-          sed -i '/#if defined(CONFIG_ROCKCHIP_RK3188)/,/^#elif defined(CONFIG_ROCKCHIP_RK3288)/d' drivers/serial/serial_rockchip.c
-          echo "已删除 old serial_rockchip.c 代码块"
+          # 【核心修复】将 serial_rockchip.c 清空，彻底解决 dtd 结构体未定义和 #endif 悬空问题
+          echo "/* Dummy file: RK3188 uses ns16550 UART, of-platdata disabled. */" > drivers/serial/serial_rockchip.c
+          echo "已清空 serial_rockchip.c"
 
           # 强制禁用 TPL 和 SPL_OF_PLATDATA 等特性
           sed -i 's/^CONFIG_TPL=y/# CONFIG_TPL is not set/g' .config
