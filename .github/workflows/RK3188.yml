@@ -1,4 +1,4 @@
-name: Build U-Boot for RK3188 Sangfor aDesk
+name: Build U-Boot for RK3188 (SPL only, no TPL)
 
 on:
   workflow_dispatch:
@@ -14,7 +14,6 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
-      # Step 1: 拉取 Rockchip 官方 U-Boot 源码
       - name: Checkout U-Boot Source
         uses: actions/checkout@v4
         with:
@@ -23,16 +22,13 @@ jobs:
           submodules: recursive
           clean: true
 
-      # Step 2: 安装交叉编译工具链
       - name: Install Toolchain
         run: |
           sudo apt-get update
           sudo apt-get install -y gcc-arm-linux-gnueabihf device-tree-compiler swig python3-dev bison flex
 
-      # Step 3: 写入定制的 U-Boot DTS
-      - name: Customize DTS for Sangfor aDesk
+      - name: Customize DTS
         run: |
-          # 创建 U-Boot 专用的精简版 DTS 文件
           cat > arch/arm/dts/rk3188-sangfor-adesk.dts << 'EOF'
           /dts-v1/;
           #include "rk3188.dtsi"
@@ -48,13 +44,10 @@ jobs:
 
               memory@60000000 {
                   device_type = "memory";
-                  reg = <0x60000000 0x40000000>; /* 1GB DDR3 */
+                  reg = <0x60000000 0x40000000>;
               };
 
-              aliases {
-                  serial0 = &uart0;
-                  mmc0 = &emmc;
-              };
+              aliases { serial0 = &uart0; mmc0 = &emmc; };
 
               vcc_sys: vsys-regulator {
                   compatible = "regulator-fixed";
@@ -87,159 +80,74 @@ jobs:
               };
           };
 
-          &uart0 {
-              status = "okay";
-              u-boot,dm-pre-reloc;
-              pinctrl-0 = <&uart0_xfer>;
-              pinctrl-names = "default";
-          };
-
-          &emmc {
-              status = "okay";
-              u-boot,dm-pre-reloc;
-              bus-width = <8>;
-              cap-mmc-highspeed;
-              non-removable;
-              vmmc-supply = <&vcc_io>;
-              vqmmc-supply = <&vccq_emmc>;
-          };
+          &uart0 { status = "okay"; u-boot,dm-pre-reloc; pinctrl-0 = <&uart0_xfer>; pinctrl-names = "default"; };
+          &emmc { status = "okay"; u-boot,dm-pre-reloc; bus-width = <8>; cap-mmc-highspeed; non-removable; vmmc-supply = <&vcc_io>; vqmmc-supply = <&vccq_emmc>; };
 
           &i2c1 {
-              status = "okay";
-              clock-frequency = <400000>;
-              u-boot,dm-pre-reloc;
-              pinctrl-0 = <&i2c1_xfer>;
-              pinctrl-names = "default";
-
+              status = "okay"; clock-frequency = <400000>; u-boot,dm-pre-reloc; pinctrl-0 = <&i2c1_xfer>; pinctrl-names = "default";
               rk808: pmic@1b {
-                  compatible = "rockchip,rk808";
-                  reg = <0x1b>;
-                  interrupt-parent = <&gpio0>;
-                  interrupts = <RK_PB3 IRQ_TYPE_LEVEL_LOW>;
-                  u-boot,dm-pre-reloc;
-                  rockchip,system-power-controller;
-                  wakeup-source;
-
+                  compatible = "rockchip,rk808"; reg = <0x1b>; interrupt-parent = <&gpio0>; interrupts = <RK_PB3 IRQ_TYPE_LEVEL_LOW>;
+                  u-boot,dm-pre-reloc; rockchip,system-power-controller; wakeup-source;
                   regulators {
-                      vdd_cpu: DCDC_REG1 {
-                          regulator-name = "vdd_cpu";
-                          regulator-min-microvolt = <750000>;
-                          regulator-max-microvolt = <1350000>;
-                          regulator-always-on;
-                          regulator-boot-on;
-                          u-boot,dm-pre-reloc;
-                      };
-                      vdd_core: DCDC_REG2 {
-                          regulator-name = "vdd_core";
-                          regulator-min-microvolt = <850000>;
-                          regulator-max-microvolt = <1250000>;
-                          regulator-always-on;
-                          regulator-boot-on;
-                          u-boot,dm-pre-reloc;
-                      };
-                      vcc_ddr: DCDC_REG3 {
-                          regulator-name = "vcc_ddr";
-                          regulator-min-microvolt = <1200000>;
-                          regulator-max-microvolt = <1200000>;
-                          regulator-always-on;
-                          regulator-boot-on;
-                          u-boot,dm-pre-reloc;
-                      };
-                      DCDC_REG4 {
-                          regulator-name = "vcc_io";
-                          regulator-min-microvolt = <3300000>;
-                          regulator-max-microvolt = <3300000>;
-                          regulator-always-on;
-                          regulator-boot-on;
-                          u-boot,dm-pre-reloc;
-                      };
-                      vcc_lan: LDO_REG1 {
-                          regulator-name = "vcc_lan";
-                          regulator-min-microvolt = <3300000>;
-                          regulator-max-microvolt = <3300000>;
-                          regulator-always-on;
-                          regulator-boot-on;
-                          u-boot,dm-pre-reloc;
-                      };
-                      vdd_10: LDO_REG3 {
-                          regulator-name = "vdd_10";
-                          regulator-min-microvolt = <1000000>;
-                          regulator-max-microvolt = <1000000>;
-                          regulator-always-on;
-                          regulator-boot-on;
-                          u-boot,dm-pre-reloc;
-                      };
+                      vdd_cpu: DCDC_REG1 { regulator-name = "vdd_cpu"; regulator-min-microvolt = <750000>; regulator-max-microvolt = <1350000>; regulator-always-on; regulator-boot-on; u-boot,dm-pre-reloc; };
+                      vdd_core: DCDC_REG2 { regulator-name = "vdd_core"; regulator-min-microvolt = <850000>; regulator-max-microvolt = <1250000>; regulator-always-on; regulator-boot-on; u-boot,dm-pre-reloc; };
+                      vcc_ddr: DCDC_REG3 { regulator-name = "vcc_ddr"; regulator-min-microvolt = <1200000>; regulator-max-microvolt = <1200000>; regulator-always-on; regulator-boot-on; u-boot,dm-pre-reloc; };
+                      DCDC_REG4 { regulator-name = "vcc_io"; regulator-min-microvolt = <3300000>; regulator-max-microvolt = <3300000>; regulator-always-on; regulator-boot-on; u-boot,dm-pre-reloc; };
+                      vcc_lan: LDO_REG1 { regulator-name = "vcc_lan"; regulator-min-microvolt = <3300000>; regulator-max-microvolt = <3300000>; regulator-always-on; regulator-boot-on; u-boot,dm-pre-reloc; };
+                      vdd_10: LDO_REG3 { regulator-name = "vdd_10"; regulator-min-microvolt = <1000000>; regulator-max-microvolt = <1000000>; regulator-always-on; regulator-boot-on; u-boot,dm-pre-reloc; };
                   };
               };
-
               hym8563: rtc@51 {
-                  compatible = "haoyu,hym8563";
-                  reg = <0x51>;
-                  interrupt-parent = <&gpio0>;
-                  interrupts = <RK_PB5 IRQ_TYPE_EDGE_FALLING>;
-                  u-boot,dm-pre-reloc;
-                  #clock-cells = <0>;
-                  wakeup-source;
+                  compatible = "haoyu,hym8563"; reg = <0x51>; interrupt-parent = <&gpio0>; interrupts = <RK_PB5 IRQ_TYPE_EDGE_FALLING>;
+                  u-boot,dm-pre-reloc; #clock-cells = <0>; wakeup-source;
               };
           };
           EOF
 
-          # 安全地向 Makefile 追加 DTS 条目
+          # 追加 DTS 目标
           echo "" >> arch/arm/dts/Makefile
           echo "dtb-\$(CONFIG_ARCH_ROCKCHIP) += rk3188-sangfor-adesk.dtb" >> arch/arm/dts/Makefile
-          echo "已安全追加 DTS 到 arch/arm/dts/Makefile。"
-
-          # 修改 defconfig 默认使用新 DTB
-          sed -i 's/CONFIG_DEFAULT_DEVICE_TREE="rk3188-radxarock"/CONFIG_DEFAULT_DEVICE_TREE="rk3188-sangfor-adesk"/g' configs/rk3188_defconfig 2>/dev/null || true
+          
+          # 修改默认 DTB
           sed -i 's/CONFIG_DEFAULT_DEVICE_TREE="rk3188-radxarock"/CONFIG_DEFAULT_DEVICE_TREE="rk3188-sangfor-adesk"/g' configs/rock_defconfig 2>/dev/null || true
 
-      # Step 4: 清理、配置并编译 U-Boot（强制修复 -march 参数）
-      - name: Build U-Boot
+      - name: Build U-Boot (SPL only)
         run: |
           export ARCH=arm
           export CROSS_COMPILE=arm-linux-gnueabihf-
+          
+          # 清理并配置
           make clean
-
-          # 选择配置
-          if [ -f configs/rk3188_defconfig ]; then
-            make rk3188_defconfig
-          else
-            make rock_defconfig
-          fi
-
-          # 【核心修复】直接修改 .config 文件
+          make rock_defconfig
+          
+          # 修复 -march（只改 arch/arm/Makefile 和顶层 Makefile）
+          sed -i 's/-march=armv5/-march=armv7-a/g' arch/arm/Makefile
+          sed -i 's/-march=armv5/-march=armv7-a/g' Makefile
+          
+          # 修改 .config：禁用 TPL，避免 TPL 编译问题，同时确保 ARMv7
           sed -i 's/CONFIG_SYS_THUMB_BUILD=y/# CONFIG_SYS_THUMB_BUILD is not set/g' .config
           sed -i 's/# CONFIG_CPU_V7 is not set/CONFIG_CPU_V7=y/g' .config
           grep -q "CONFIG_CPU_V7" .config || echo "CONFIG_CPU_V7=y" >> .config
-          # 强制设置 ARM 架构为 v7
           sed -i 's/CONFIG_SYS_ARM_ARCH=5/CONFIG_SYS_ARM_ARCH=7/g' .config
+          sed -i 's/^CONFIG_TPL=y/# CONFIG_TPL is not set/g' .config  # 禁用 TPL
+          # 确保 SPL 开启
+          sed -i 's/# CONFIG_SPL is not set/CONFIG_SPL=y/g' .config
+          grep -q "CONFIG_SPL" .config || echo "CONFIG_SPL=y" >> .config
           
-          # 【彻底修复】从源码层面替换 -march=armv5，覆盖 Makefile 的硬编码
-          # 重点替换 arch/arm/Makefile 和所有相关配置文件
-          find arch/ -name "Makefile" -exec sed -i 's/-march=armv5/-march=armv7-a/g' {} +
-          find . -name "*.mk" -exec sed -i 's/-march=armv5/-march=armv7-a/g' {} +
-          echo "已强制替换所有 -march=armv5 为 -march=armv7-a"
-
-          # 重新生成配置以应用修改
           make olddefconfig
-
-          # 编译 U-Boot
-          make -j$(nproc)
-
-          # 尝试打包为瑞芯微工具可识别的 Loader 镜像
-          make u-boot-rockchip.bin || true
-          ls -la u-boot*  # 打印生成的文件，方便排查
-
-      # Step 5: 上传编译产物
-      - name: Upload Build Artifacts
+          
+          # 编译 SPL 和 U-Boot，不编译 TPL
+          make -j$(nproc) spl/u-boot-spl.bin u-boot.bin
+          
+          # 列出产物
+          ls -la spl/u-boot-spl.bin u-boot.bin u-boot-rockchip.bin 2>/dev/null || true
+          
+      - name: Upload Artifacts
         uses: actions/upload-artifact@v4
         with:
-          name: rk3188-sangfor-uboot-binaries
+          name: rk3188-sangfor-uboot-spl-binaries
           path: |
-            u-boot-rockchip.bin
             u-boot.bin
-            u-boot.img
-            idbloader.img
-            tpl/u-boot-tpl.bin
             spl/u-boot-spl.bin
+            u-boot-rockchip.bin
           if-no-files-found: warn
