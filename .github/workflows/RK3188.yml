@@ -124,10 +124,21 @@ jobs:
           sed -i 's/-march=armv5/-march=armv7-a/g' arch/arm/Makefile
           sed -i 's/-march=armv5/-march=armv7-a/g' Makefile
           
-          # 强制禁用 TPL 和 SPL_OF_PLATDATA（跳过 Python2 的 dtoc 工具）
+          # 强制禁用 TPL 和 SPL_OF_PLATDATA（彻底避免 dtoc 工具生成不兼容结构体）
+          # 方法1：直接关闭相关配置项
           sed -i 's/^CONFIG_TPL=y/# CONFIG_TPL is not set/g' .config
           sed -i 's/^CONFIG_SPL_OF_PLATDATA=y/# CONFIG_SPL_OF_PLATDATA is not set/g' .config
+          sed -i 's/^CONFIG_TPL_OF_PLATDATA=y/# CONFIG_TPL_OF_PLATDATA is not set/g' .config
+          
+          # 方法2：清除任何可能存在的 of-platdata 标志
+          sed -i '/^CONFIG_SPL_OF_PLATDATA=/d' .config
+          sed -i '/^CONFIG_TPL_OF_PLATDATA=/d' .config
+          sed -i '/^CONFIG_OF_PLATDATA=/d' .config
+          
+          # 确保没有残留的 dtoc 配置项
           grep -q "CONFIG_SPL_OF_PLATDATA" .config || echo "# CONFIG_SPL_OF_PLATDATA is not set" >> .config
+          grep -q "CONFIG_OF_PLATDATA" .config || echo "# CONFIG_OF_PLATDATA is not set" >> .config
+          
           # 确保 CONFIG_SPL 开启
           sed -i 's/# CONFIG_SPL is not set/CONFIG_SPL=y/g' .config
           grep -q "CONFIG_SPL" .config || echo "CONFIG_SPL=y" >> .config
@@ -136,6 +147,21 @@ jobs:
           sed -i 's/CONFIG_SYS_THUMB_BUILD=y/# CONFIG_SYS_THUMB_BUILD is not set/g' .config
           sed -i 's/# CONFIG_CPU_V7 is not set/CONFIG_CPU_V7=y/g' .config
           grep -q "CONFIG_CPU_V7" .config || echo "CONFIG_CPU_V7=y" >> .config
+          sed -i 's/CONFIG_SYS_ARM_ARCH=5/CONFIG_SYS_ARM_ARCH=7/g' .config
+          
+          # 重新生成配置
+          make olddefconfig
+          
+          # 彻底清理可能残留的 dtoc 生成文件
+          make mrproper
+          make rock_defconfig
+          
+          # 再次修改配置
+          sed -i 's/^CONFIG_TPL=y/# CONFIG_TPL is not set/g' .config
+          sed -i 's/^CONFIG_SPL_OF_PLATDATA=y/# CONFIG_SPL_OF_PLATDATA is not set/g' .config
+          sed -i 's/^CONFIG_TPL_OF_PLATDATA=y/# CONFIG_TPL_OF_PLATDATA is not set/g' .config
+          sed -i 's/CONFIG_SYS_THUMB_BUILD=y/# CONFIG_SYS_THUMB_BUILD is not set/g' .config
+          sed -i 's/# CONFIG_CPU_V7 is not set/CONFIG_CPU_V7=y/g' .config
           sed -i 's/CONFIG_SYS_ARM_ARCH=5/CONFIG_SYS_ARM_ARCH=7/g' .config
           
           make olddefconfig
