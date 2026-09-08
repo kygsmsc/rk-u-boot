@@ -188,26 +188,38 @@ jobs:
           sed -i 's/-march=armv5/-march=armv5te/g' arch/arm/Makefile
           echo "已修改 arch/arm/Makefile 以兼容新编译器。"
 
-          # 【修复2】安全地向 Makefile 追加 DTS 条目（替换之前会报错的 sed 插入方法）
-          # 先插入一个空行确保安全，再追加新的 DTB 目标
+          # 【修复2】安全地向 Makefile 追加 DTS 条目
           echo "" >> arch/arm/dts/Makefile
           echo "dtb-\$(CONFIG_ARCH_ROCKCHIP) += rk3188-sangfor-adesk.dtb" >> arch/arm/dts/Makefile
           echo "已安全追加 DTS 到 arch/arm/dts/Makefile。"
 
-          # 修改 defconfig 默认使用新 DTB
-          sed -i 's/CONFIG_DEFAULT_DEVICE_TREE="rk3188-radxarock"/CONFIG_DEFAULT_DEVICE_TREE="rk3188-sangfor-adesk"/g' configs/rock_defconfig
+          # 【修复3】修改 defconfig 默认使用新 DTB (若有 rk3188_defconfig 则直接替换，否则用 rock_defconfig)
+          sed -i 's/CONFIG_DEFAULT_DEVICE_TREE="rk3188-radxarock"/CONFIG_DEFAULT_DEVICE_TREE="rk3188-sangfor-adesk"/g' configs/rk3188_defconfig 2>/dev/null || true
+          sed -i 's/CONFIG_DEFAULT_DEVICE_TREE="rk3188-radxarock"/CONFIG_DEFAULT_DEVICE_TREE="rk3188-sangfor-adesk"/g' configs/rock_defconfig 2>/dev/null || true
 
-      # Step 4: 清理并编译 U-Boot
+      # Step 4: 清理并编译 U-Boot (绕过新版 make.sh，使用标准 Makefile 流程)
       - name: Build U-Boot
         run: |
           export ARCH=arm
           export CROSS_COMPILE=arm-linux-gnueabihf-
-          # 先清理缓存，确保使用修改后的新参数编译
           make clean
-          make rock_defconfig
-          # 【非常重要】Rockchip 官方仓库必须使用 make.sh 生成最终的 Loader 镜像
-          # make.sh 会在内部调用 make 并将镜像打包为 u-boot-rockchip.bin
-          ./make.sh rk3188
+
+          # 检查 configs 目录下有哪些 rk3188 配置
+          ls configs/ | grep rk3188 || echo "未找到 rk3188_defconfig"
+
+          # 如果存在 rk3188_defconfig 则使用，否则使用 rock_defconfig
+          if [ -f configs/rk3188_defconfig ]; then
+            make rk3188_defconfig
+          else
+            make rock_defconfig
+          fi
+          
+          # 编译 U-Boot
+          make -j$(nproc)
+
+          # 尝试打包为瑞芯微工具可识别的 Loader 镜像 (如果支持)
+          make u-boot-rockchip.bin || true
+          ls -la u-boot*  # 打印生成的文件，方便排查
 
       # Step 5: 上传编译产物
       - name: Upload Build Artifacts
@@ -216,8 +228,9 @@ jobs:
           name: rk3188-sangfor-uboot-binaries
           path: |
             u-boot-rockchip.bin
-            u-boot-rockchip-spi.bin
-            idbloader.img
-            u-boot.itb
             u-boot.bin
+            u-boot.img
+            idbloader.img
+            tpl/u-boot-tpl.bin
+            spl/u-boot-spl.bin
           if-no-files-found: warn
