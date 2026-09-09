@@ -60,8 +60,6 @@ jobs:
           make rk3188_defconfig
 
           # 强制开启 TPL 及 RK3188 必需支持
-          sed -i 's/^CONFIG_TPL=y/CONFIG_TPL=y/g' .config
-          # 如果被注释，强制改为开启
           sed -i 's/^# CONFIG_TPL is not set/CONFIG_TPL=y/g' .config
           sed -i 's/^# CONFIG_ROCKCHIP_RK3188 is not set/CONFIG_ROCKCHIP_RK3188=y/g' .config
           sed -i 's/^# CONFIG_TARGET_ROCK is not set/CONFIG_TARGET_ROCK=y/g' .config
@@ -71,11 +69,25 @@ jobs:
           grep -q "^CONFIG_ROCKCHIP_RK3188=y" .config || echo "CONFIG_ROCKCHIP_RK3188=y" >> .config
           grep -q "^CONFIG_TARGET_ROCK=y" .config || echo "CONFIG_TARGET_ROCK=y" >> .config
 
+          # ★★★ 彻底禁用 of-platdata，避免 dtoc 工具解析 clocks 报错 ★★★
+          sed -i 's/^CONFIG_SPL_OF_PLATDATA=y/# CONFIG_SPL_OF_PLATDATA is not set/g' .config
+          sed -i 's/^CONFIG_TPL_OF_PLATDATA=y/# CONFIG_TPL_OF_PLATDATA is not set/g' .config
+          sed -i 's/^CONFIG_OF_PLATDATA=y/# CONFIG_OF_PLATDATA is not set/g' .config
+          # 如果配置中根本没有这些行，则强制追加为“未设置”
+          grep -q "CONFIG_SPL_OF_PLATDATA" .config || echo "# CONFIG_SPL_OF_PLATDATA is not set" >> .config
+          grep -q "CONFIG_TPL_OF_PLATDATA" .config || echo "# CONFIG_TPL_OF_PLATDATA is not set" >> .config
+          grep -q "CONFIG_OF_PLATDATA" .config || echo "# CONFIG_OF_PLATDATA is not set" >> .config
+
           # 禁用警告即错误，并清理旧串口驱动
           sed -i 's/CONFIG_WERROR=y/# CONFIG_WERROR is not set/g' .config
           echo "/* dummy file */" > drivers/serial/serial_rockchip.c
 
-          # 【关键修复】为 TPL 补上 dts/dt.dtb 依赖，防止并行编译失败
+          # 【关键修复】删除 Makefile.spl 中所有调用 dtoc 的规则，确保它不再运行
+          sed -i '/dtoc/d' scripts/Makefile.spl
+          sed -i '/dt-platdata/d' scripts/Makefile.spl
+          sed -i '/dt-structs-gen/d' scripts/Makefile.spl
+
+          # 为 TPL 补上 dts/dt.dtb 依赖，防止并行编译失败
           sed -i 's|tpl/u-boot-tpl.bin:.*|tpl/u-boot-tpl.bin: tools prepare dts/dt.dtb|' Makefile
 
           # 移除大小限制计算错误
@@ -86,18 +98,21 @@ jobs:
 
           make olddefconfig
 
-          # olddefconfig 后再次强制设置关键项和限制
+          # olddefconfig 后再次强制设置关键项和限制，确保不被覆盖
           sed -i 's/^CONFIG_TPL=y/CONFIG_TPL=y/g' .config
+          sed -i 's/^CONFIG_SPL_OF_PLATDATA=y/# CONFIG_SPL_OF_PLATDATA is not set/g' .config
+          sed -i 's/^CONFIG_TPL_OF_PLATDATA=y/# CONFIG_TPL_OF_PLATDATA is not set/g' .config
+          sed -i 's/^CONFIG_OF_PLATDATA=y/# CONFIG_OF_PLATDATA is not set/g' .config
           sed -i 's/^CONFIG_SPL_SIZE_LIMIT=.*/CONFIG_SPL_SIZE_LIMIT=0/g' .config
           sed -i 's/^CONFIG_TPL_SIZE_LIMIT=.*/CONFIG_TPL_SIZE_LIMIT=0/g' .config
 
-          # 编译（强制单线程）
+          # 编译（强制单线程，避免依赖竞态）
           make -j1
 
           echo "================ 检查产物 ================"
           ls -la tpl/u-boot-tpl.bin spl/u-boot-spl.bin u-boot.bin u-boot-dtb.bin 2>/dev/null || true
           if [ ! -f tpl/u-boot-tpl.bin ]; then
-            echo "错误：TPL 仍未生成，请检查 CONFIG_TPL=y 及 CONFIG_ROCKCHIP_RK3188=y 是否生效。"
+            echo "错误：TPL 仍未生成，请检查 CONFIG_TPL=y 是否生效。"
             grep "CONFIG_TPL" .config || true
             exit 1
           fi
