@@ -54,19 +54,26 @@ jobs:
           make clean
           make rk3188_defconfig
 
-          # 精简配置
+          # 精简配置（注意：不要禁用 TPL，RK3188 必须有 TPL）
           sed -i 's/^CONFIG_SPL_PINCTRL=y/# CONFIG_SPL_PINCTRL is not set/g' .config
           sed -i 's/^CONFIG_SPL_OF_PLATDATA=y/# CONFIG_SPL_OF_PLATDATA is not set/g' .config
-          sed -i 's/^CONFIG_TPL=y/# CONFIG_TPL is not set/g' .config
+          # 移除了禁用 TPL 的 sed 命令！RK3188 必须保留 TPL。
           sed -i 's/^CONFIG_TPL_OF_PLATDATA=y/# CONFIG_TPL_OF_PLATDATA is not set/g' .config
           sed -i 's/CONFIG_WERROR=y/# CONFIG_WERROR is not set/g' .config
           echo "/* dummy file */" > drivers/serial/serial_rockchip.c
 
+          # 删除 Makefile 中的大小限制计算
           sed -i '/limit = /d' scripts/Makefile.spl
           sed -i '/printf "%d"/d' scripts/Makefile.spl
 
-          make olddefconfig
+          # 禁用 SPL 和 TPL 的大小检查
           sed -i 's/^CONFIG_SPL_SIZE_LIMIT=.*/CONFIG_SPL_SIZE_LIMIT=0/g' .config
+          sed -i 's/^CONFIG_TPL_SIZE_LIMIT=.*/CONFIG_TPL_SIZE_LIMIT=0/g' .config
+
+          make olddefconfig
+          # olddefconfig 后再次强制设为 0
+          sed -i 's/^CONFIG_SPL_SIZE_LIMIT=.*/CONFIG_SPL_SIZE_LIMIT=0/g' .config
+          sed -i 's/^CONFIG_TPL_SIZE_LIMIT=.*/CONFIG_TPL_SIZE_LIMIT=0/g' .config
 
           make -j$(nproc)
 
@@ -78,7 +85,7 @@ jobs:
           cd u-boot
           echo "开始打包..."
           
-          # 查找 boot_merger 工具（尝试仓库自带或从 rkbin 下载）
+          # 查找 boot_merger 工具（尝试从 rkbin 下载）
           if [ ! -f tools/boot_merger ]; then
             echo "未找到 boot_merger，尝试从 rkbin 下载"
             wget -O tools/boot_merger https://raw.githubusercontent.com/rockchip-linux/rkbin/master/tools/boot_merger || true
@@ -87,7 +94,7 @@ jobs:
 
           if [ -f tools/boot_merger ]; then
             echo "使用 boot_merger 打包"
-            # 构造 TPL+SPL 数据
+            # 构造 TPL+SPL 数据（必须先有 tpl/u-boot-tpl.bin）
             cat tpl/u-boot-tpl.bin > tplspl.bin
             truncate -s 1020 tplspl.bin
             printf 'RK31' | dd of=tplspl.bin bs=1 count=4 conv=notrunc
