@@ -5,6 +5,10 @@ on:
   push:
     branches: [ "main" ]
 
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
 jobs:
   build:
     runs-on: ubuntu-latest
@@ -15,7 +19,12 @@ jobs:
       - name: Install Toolchain
         run: |
           sudo apt-get update
-          sudo apt-get install -y gcc-arm-linux-gnueabi gcc-arm-linux-gnueabihf device-tree-compiler swig python3-dev bison flex
+          sudo apt-get install -y \
+            gcc-arm-linux-gnueabi \
+            gcc-arm-linux-gnueabihf \
+            device-tree-compiler \
+            swig python3-dev \
+            bison flex
 
       - name: Clone Rockchip U-Boot
         run: |
@@ -29,8 +38,10 @@ jobs:
           cp "$GITHUB_WORKSPACE/rk3188-sangfor-adesk.dts" arch/arm/dts/rk3188-sangfor-adesk.dts
           echo "" >> arch/arm/dts/Makefile
           echo "dtb-\$(CONFIG_ARCH_ROCKCHIP) += rk3188-sangfor-adesk.dtb" >> arch/arm/dts/Makefile
-          # 确保正式使用 rock_defconfig
+          
+          # 直接复制官方的 rock_defconfig，确保包含完整的 RK3188 支持
           cp configs/rock_defconfig configs/rk3188_defconfig
+          # 替换默认 DTB
           sed -i 's/CONFIG_DEFAULT_DEVICE_TREE="rk3188-radxarock"/CONFIG_DEFAULT_DEVICE_TREE="rk3188-sangfor-adesk"/g' configs/rk3188_defconfig
 
       - name: Build U-Boot
@@ -39,51 +50,54 @@ jobs:
           export ARCH=arm
           export CROSS_COMPILE=arm-linux-gnueabi-
           export KCFLAGS="-Wno-error"
+          export PATH=$PATH:$PWD/tools
 
+          # 彻底清理，确保没有任何残留配置
           make clean
-          # 使用方案 A 的建议：直接编译 rock 目标
-          make rock_defconfig
+          make distclean
 
-          # 清理残留配置，重新生成
-          make mrproper
-          make rock_defconfig
+          # 使用官方的 rock_defconfig
+          make rk3188_defconfig
 
-          # 核心精简：仅清理确定不会干扰的项
+          # 强制开启 TPL 及 RK3188 必需支持
+          sed -i 's/^CONFIG_TPL=y/CONFIG_TPL=y/g' .config
+          # 如果被注释，强制改为开启
+          sed -i 's/^# CONFIG_TPL is not set/CONFIG_TPL=y/g' .config
+          sed -i 's/^# CONFIG_ROCKCHIP_RK3188 is not set/CONFIG_ROCKCHIP_RK3188=y/g' .config
+          sed -i 's/^# CONFIG_TARGET_ROCK is not set/CONFIG_TARGET_ROCK=y/g' .config
+
+          # 确认关键配置存在（缺失则直接追加）
+          grep -q "^CONFIG_TPL=y" .config || echo "CONFIG_TPL=y" >> .config
+          grep -q "^CONFIG_ROCKCHIP_RK3188=y" .config || echo "CONFIG_ROCKCHIP_RK3188=y" >> .config
+          grep -q "^CONFIG_TARGET_ROCK=y" .config || echo "CONFIG_TARGET_ROCK=y" >> .config
+
+          # 禁用警告即错误，并清理旧串口驱动
           sed -i 's/CONFIG_WERROR=y/# CONFIG_WERROR is not set/g' .config
           echo "/* dummy file */" > drivers/serial/serial_rockchip.c
 
-          # 强制开启 TPL 支持配置
-          sed -i 's/^# CONFIG_TPL is not set/CONFIG_TPL=y/g' .config
-          sed -i 's/^# CONFIG_ROCKCHIP_BROM_HELPER is not set/CONFIG_ROCKCHIP_BROM_HELPER=y/g' .config
-          sed -i 's/^# CONFIG_ROCKCHIP_SPL_BACK_TO_BROM is not set/CONFIG_ROCKCHIP_SPL_BACK_TO_BROM=y/g' .config
-          sed -i 's/^# CONFIG_TPL_ROCKCHIP_BACK_TO_BROM is not set/CONFIG_TPL_ROCKCHIP_BACK_TO_BROM=y/g' .config
-          sed -i 's/^# CONFIG_TPL_SERIAL_SUPPORT is not set/CONFIG_TPL_SERIAL_SUPPORT=y/g' .config
-          sed -i 's/^# CONFIG_TPL_LIBCOMMON_SUPPORT is not set/CONFIG_TPL_LIBCOMMON_SUPPORT=y/g' .config
-          sed -i 's/^# CONFIG_TPL_LIBGENERIC_SUPPORT is not set/CONFIG_TPL_LIBGENERIC_SUPPORT=y/g' .config
-          sed -i 's/^# CONFIG_TPL_TINY_MEMSET is not set/CONFIG_TPL_TINY_MEMSET=y/g' .config
+          # 【关键修复】为 TPL 补上 dts/dt.dtb 依赖，防止并行编译失败
+          sed -i 's|tpl/u-boot-tpl.bin:.*|tpl/u-boot-tpl.bin: tools prepare dts/dt.dtb|' Makefile
 
-          # 移除大小限制报错
+          # 移除大小限制计算错误
           sed -i '/limit = /d' scripts/Makefile.spl
           sed -i '/printf "%d"/d' scripts/Makefile.spl
-
-          make olddefconfig
-
-          # olddefconfig 后再次强制 TPL 配置（防止被重置）
-          sed -i 's/^CONFIG_TPL=y/CONFIG_TPL=y/g' .config
-          grep -q "CONFIG_TPL=y" .config || echo "CONFIG_TPL=y" >> .config
-
-          # 【关键修复】补齐 TPL 的 DTB 依赖
-          sed -i 's|tpl/u-boot-tpl.bin: tools prepare|tpl/u-boot-tpl.bin: tools prepare dts/dt.dtb|' Makefile
           sed -i 's/^CONFIG_SPL_SIZE_LIMIT=.*/CONFIG_SPL_SIZE_LIMIT=0/g' .config
           sed -i 's/^CONFIG_TPL_SIZE_LIMIT=.*/CONFIG_TPL_SIZE_LIMIT=0/g' .config
 
-          make -j$(nproc)
+          make olddefconfig
+
+          # olddefconfig 后再次强制设置关键项和限制
+          sed -i 's/^CONFIG_TPL=y/CONFIG_TPL=y/g' .config
+          sed -i 's/^CONFIG_SPL_SIZE_LIMIT=.*/CONFIG_SPL_SIZE_LIMIT=0/g' .config
+          sed -i 's/^CONFIG_TPL_SIZE_LIMIT=.*/CONFIG_TPL_SIZE_LIMIT=0/g' .config
+
+          # 编译（强制单线程）
+          make -j1
 
           echo "================ 检查产物 ================"
           ls -la tpl/u-boot-tpl.bin spl/u-boot-spl.bin u-boot.bin u-boot-dtb.bin 2>/dev/null || true
-          # 若缺失 TPL，终止并打印日志
           if [ ! -f tpl/u-boot-tpl.bin ]; then
-            echo "错误：TPL 仍未生成，请检查 CONFIG_TPL=y 是否在 .config 中生效。"
+            echo "错误：TPL 仍未生成，请检查 CONFIG_TPL=y 及 CONFIG_ROCKCHIP_RK3188=y 是否生效。"
             grep "CONFIG_TPL" .config || true
             exit 1
           fi
@@ -91,20 +105,38 @@ jobs:
       - name: Package U-Boot
         run: |
           cd u-boot
+          echo "开始打包..."
           if [ ! -f tools/boot_merger ]; then
-            wget -O tools/boot_merger https://raw.githubusercontent.com/rockchip-linux/rkbin/master/tools/boot_merger
-            chmod +x tools/boot_merger
+            wget -O tools/boot_merger https://raw.githubusercontent.com/rockchip-linux/rkbin/master/tools/boot_merger || true
+            chmod +x tools/boot_merger 2>/dev/null || true
           fi
-          echo "生成 RK3188Loader..."
-          cat tpl/u-boot-tpl.bin > tplspl.bin
-          truncate -s 1020 tplspl.bin
-          printf 'RK31' | dd of=tplspl.bin bs=1 count=4 conv=notrunc
-          cat spl/u-boot-spl.bin >> tplspl.bin
-          truncate -s 2048 tplspl.bin
-          printf '[CHIP_NAME]\nNAME=RK31\n[VERSION]\nMAJOR=2\nMINOR=3\n[CODE471_OPTION]\nNUM=1\nPath1=tplspl.bin\nSleep=0\n[CODE472_OPTION]\nNUM=1\nPath1=u-boot-dtb.bin\nSleep=0\n[LOADER_OPTION]\nNUM=2\nLOADER1=FlashData\nLOADER2=FlashBoot\nFlashData=tplspl.bin\nFlashBoot=u-boot-dtb.bin\n[OUTPUT]\nPATH=RK3188Loader_miniall.bin\n' > /tmp/RK3188MINIALL.ini
-          ./tools/boot_merger --rc4 /tmp/RK3188MINIALL.ini
-          echo "打包完成，列出产物："
-          ls -la RK3188Loader_miniall.bin uboot.img u-boot.bin
+
+          if [ -f tools/boot_merger ] && [ -f tpl/u-boot-tpl.bin ]; then
+            echo "使用 boot_merger 打包"
+            cat tpl/u-boot-tpl.bin > tplspl.bin
+            truncate -s 1020 tplspl.bin
+            printf 'RK31' | dd of=tplspl.bin bs=1 count=4 conv=notrunc
+            cat spl/u-boot-spl.bin >> tplspl.bin
+            truncate -s 2048 tplspl.bin
+
+            printf '[CHIP_NAME]\nNAME=RK31\n[VERSION]\nMAJOR=2\nMINOR=3\n[CODE471_OPTION]\nNUM=1\nPath1=tplspl.bin\nSleep=0\n[CODE472_OPTION]\nNUM=1\nPath1=u-boot-dtb.bin\nSleep=0\n[LOADER_OPTION]\nNUM=2\nLOADER1=FlashData\nLOADER2=FlashBoot\nFlashData=tplspl.bin\nFlashBoot=u-boot-dtb.bin\n[OUTPUT]\nPATH=RK3188Loader_miniall.bin\n' > /tmp/RK3188MINIALL.ini
+
+            ./tools/boot_merger --rc4 /tmp/RK3188MINIALL.ini
+            echo "RK3188Loader_miniall.bin 生成成功"
+          else
+            echo "打包失败：缺少 tpl/u-boot-tpl.bin 或 boot_merger 工具"
+            exit 1
+          fi
+
+          if [ -f u-boot-dtb.bin ]; then
+            ./tools/mkimage -n rk3188 -T rksd -d u-boot-dtb.bin uboot.img
+            echo "uboot.img 生成成功"
+          else
+            echo "u-boot-dtb.bin 不存在，无法生成 uboot.img"
+          fi
+
+          echo "最终产物列表："
+          ls -la RK3188Loader_miniall.bin uboot.img u-boot.bin 2>/dev/null || true
 
       - name: Upload Artifacts
         uses: actions/upload-artifact@v4
@@ -112,5 +144,7 @@ jobs:
           name: rk3188-uboot-package
           path: |
             u-boot/RK3188Loader_miniall.bin
+            u-boot/uboot.img
             u-boot/u-boot.bin
             u-boot/u-boot-dtb.bin
+          if-no-files-found: warn
