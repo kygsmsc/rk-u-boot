@@ -54,7 +54,7 @@ jobs:
           make clean
           make rk3188_defconfig
 
-          # 禁用不需要的组件和报错
+          # 精简配置
           sed -i 's/^CONFIG_SPL_PINCTRL=y/# CONFIG_SPL_PINCTRL is not set/g' .config
           sed -i 's/^CONFIG_SPL_OF_PLATDATA=y/# CONFIG_SPL_OF_PLATDATA is not set/g' .config
           sed -i 's/^CONFIG_TPL=y/# CONFIG_TPL is not set/g' .config
@@ -62,78 +62,56 @@ jobs:
           sed -i 's/CONFIG_WERROR=y/# CONFIG_WERROR is not set/g' .config
           echo "/* dummy file */" > drivers/serial/serial_rockchip.c
 
-          # 从 Makefile 中移除大小限制检查代码
           sed -i '/limit = /d' scripts/Makefile.spl
           sed -i '/printf "%d"/d' scripts/Makefile.spl
 
           make olddefconfig
-          # 强制将 SPL 大小限制设为 0
           sed -i 's/^CONFIG_SPL_SIZE_LIMIT=.*/CONFIG_SPL_SIZE_LIMIT=0/g' .config
 
           make -j$(nproc)
 
-          echo "================ 检查编译产物 ================"
+          echo "编译完成。检查产物："
           ls -la tpl/u-boot-tpl.bin spl/u-boot-spl.bin u-boot.bin u-boot-dtb.bin 2>/dev/null || true
 
-      # 新增：打包与加密步骤
       - name: Package U-Boot
         run: |
           cd u-boot
-          # 确保路径正确，如果 tpl 未生成，需要检查配置
-          echo "================ 开始打包 ================"
-          # 1. 拼接 TPL 和 SPL
-          cat tpl/u-boot-tpl.bin > tplspl.bin
-          # 补零到 1020 字节 (BootROM 要求)
-          truncate -s 1020 tplspl.bin
-          # 加上 RK31 启动头
-          printf 'RK31' | dd of=tplspl.bin bs=1 count=4 conv=notrunc
-          cat spl/u-boot-spl.bin >> tplspl.bin
-          # 补零到 2048 字节 (BootROM 读取 2KB 页)
-          truncate -s 2048 tplspl.bin
+          echo "开始打包..."
+          
+          # 查找 boot_merger 工具（尝试仓库自带或从 rkbin 下载）
+          if [ ! -f tools/boot_merger ]; then
+            echo "未找到 boot_merger，尝试从 rkbin 下载"
+            wget -O tools/boot_merger https://raw.githubusercontent.com/rockchip-linux/rkbin/master/tools/boot_merger || true
+            chmod +x tools/boot_merger 2>/dev/null || true
+          fi
 
-          # 2. 生成 RK3188Loader_miniall.bin (第一级 Loader，用于初始化 DDR)
           if [ -f tools/boot_merger ]; then
-            cat > /tmp/RK3188MINIALL.ini << 'EOF'
-[CHIP_NAME]
-NAME=RK31
-[VERSION]
-MAJOR=2
-MINOR=3
-[CODE471_OPTION]
-NUM=1
-Path1=tplspl.bin
-Sleep=0
-[CODE472_OPTION]
-NUM=1
-Path1=u-boot-dtb.bin
-Sleep=0
-[LOADER_OPTION]
-NUM=2
-LOADER1=FlashData
-LOADER2=FlashBoot
-FlashData=tplspl.bin
-FlashBoot=u-boot-dtb.bin
-[OUTPUT]
-PATH=RK3188Loader_miniall.bin
-EOF
-            # 执行 boot_merger 生成一级 Loader
+            echo "使用 boot_merger 打包"
+            # 构造 TPL+SPL 数据
+            cat tpl/u-boot-tpl.bin > tplspl.bin
+            truncate -s 1020 tplspl.bin
+            printf 'RK31' | dd of=tplspl.bin bs=1 count=4 conv=notrunc
+            cat spl/u-boot-spl.bin >> tplspl.bin
+            truncate -s 2048 tplspl.bin
+
+            # 创建 RK3188MINIALL.ini（用 printf 避免 YAML 问题）
+            printf '[CHIP_NAME]\nNAME=RK31\n[VERSION]\nMAJOR=2\nMINOR=3\n[CODE471_OPTION]\nNUM=1\nPath1=tplspl.bin\nSleep=0\n[CODE472_OPTION]\nNUM=1\nPath1=u-boot-dtb.bin\nSleep=0\n[LOADER_OPTION]\nNUM=2\nLOADER1=FlashData\nLOADER2=FlashBoot\nFlashData=tplspl.bin\nFlashBoot=u-boot-dtb.bin\n[OUTPUT]\nPATH=RK3188Loader_miniall.bin\n' > /tmp/RK3188MINIALL.ini
+
             ./tools/boot_merger --rc4 /tmp/RK3188MINIALL.ini
             echo "RK3188Loader_miniall.bin 生成成功"
           else
-            echo "警告: 未找到 boot_merger 工具，无法生成 RK3188Loader_miniall.bin"
+            echo "boot_merger 不可用，无法生成完整 Loader。请手动使用 rkdeveloptool 或 dd 写入。"
           fi
 
-          # 3. 生成 uboot.img (第二级 U-Boot，用于引导内核)
-          # 使用 mkimage 打包为 uboot.img
+          # 生成 uboot.img
           if [ -f u-boot-dtb.bin ]; then
-             tools/mkimage -n rk3188 -T rksd -d u-boot-dtb.bin uboot.img
-             echo "uboot.img 生成成功"
+            ./tools/mkimage -n rk3188 -T rksd -d u-boot-dtb.bin uboot.img
+            echo "uboot.img 生成成功"
           else
-             echo "错误: u-boot-dtb.bin 不存在，无法生成 uboot.img"
+            echo "u-boot-dtb.bin 不存在，无法生成 uboot.img"
           fi
 
-          # 列出所有生成的产物
-          echo "================ 最终产物 ================"
+          echo "最终产物列表："
           ls -la RK3188Loader_miniall.bin uboot.img u-boot.bin 2>/dev/null || true
 
       - name: Upload Artifacts
