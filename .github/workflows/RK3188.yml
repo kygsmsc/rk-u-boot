@@ -1,4 +1,4 @@
-name: Build U-Boot for RK3188 (with GCC 7)
+name: Build U-Boot for RK3188 (with Linaro GCC 7.5)
 
 on:
   push:
@@ -11,11 +11,10 @@ jobs:
   build-uboot:
     runs-on: ubuntu-22.04
     steps:
-      - name: Install dependencies and GCC 7 toolchain
+      - name: Install dependencies (excluding gcc-7)
         run: |
           sudo apt-get update
           sudo apt-get install -y \
-            gcc-7-arm-linux-gnueabihf \
             device-tree-compiler \
             bc \
             bison \
@@ -26,17 +25,26 @@ jobs:
             cpio \
             git \
             wget \
+            xz-utils \
             python3 \
             python3-pyelftools
-          # 将默认的 arm-linux-gnueabihf-gcc 指向 gcc-7
-          sudo ln -sf /usr/bin/arm-linux-gnueabihf-gcc-7 /usr/bin/arm-linux-gnueabihf-gcc
-          sudo ln -sf /usr/bin/arm-linux-gnueabihf-g++-7 /usr/bin/arm-linux-gnueabihf-g++ 2>/dev/null || true
+
+      - name: Download and setup Linaro GCC 7.5 toolchain
+        run: |
+          # 下载 Linaro 7.5.0 2019.12 (支持 armv5)
+          wget -q https://releases.linaro.org/components/toolchain/binaries/7.5-2019.12/arm-linux-gnueabihf/gcc-linaro-7.5.0-2019.12-x86_64_arm-linux-gnueabihf.tar.xz
+          # 解压到当前目录
+          tar -xf gcc-linaro-7.5.0-2019.12-x86_64_arm-linux-gnueabihf.tar.xz
+          # 将 bin 目录添加到 PATH
+          echo "$PWD/gcc-linaro-7.5.0-2019.12-x86_64_arm-linux-gnueabihf/bin" >> $GITHUB_PATH
+          # 设置环境变量供后续步骤使用
+          echo "CROSS_COMPILE=arm-linux-gnueabihf-" >> $GITHUB_ENV
 
       - name: Clone Rockchip U-Boot
         run: |
           git clone --depth 1 https://github.com/rockchip-linux/u-boot.git
 
-      - name: Clone rkbin (optional)
+      - name: Clone rkbin (optional, for reference)
         run: |
           git clone --depth 1 https://github.com/rockchip-linux/rkbin.git
 
@@ -45,15 +53,15 @@ jobs:
           cd u-boot
           # 配置
           make rock_defconfig CROSS_COMPILE=arm-linux-gnueabihf-
-          # 可选：强制设为 ARMv7（但 GCC 7 也能处理 ARMv5，所以可省略）
+          # 修改架构为 ARMv7 (Cortex-A9) 以获得更好性能，但 GCC 7 也能处理 ARMv5
           sed -i 's/CONFIG_ARM_ARCH=5/CONFIG_ARM_ARCH=7/' .config
           echo "CONFIG_CPU_V7=y" >> .config
-          # 编译（禁用 -Werror 以防警告被当作错误）
+          # 编译
           make CROSS_COMPILE=arm-linux-gnueabihf- \
                KCFLAGS="-Wno-error" \
                KBUILD_CFLAGS="-Wno-error" \
                -j$(nproc)
-          # 打包成 Rockchip 格式
+          # 打包为 Rockchip 格式 (uboot.img)
           tools/mkimage -n rk3188 -T rksd -d spl/u-boot-spl.bin u-boot.img
           cat u-boot.bin >> u-boot.img
 
@@ -63,7 +71,6 @@ jobs:
           cp u-boot/u-boot.img uboot-output/
           cp u-boot/spl/u-boot-spl.bin uboot-output/ 2>/dev/null || true
           cp u-boot/u-boot.bin uboot-output/ 2>/dev/null || true
-          # parameter.txt 示例
           cat > uboot-output/parameter.txt << EOF
           FIRMWARE_VER:1.0.0
           MACHINE_MODEL:rk3188
@@ -80,5 +87,5 @@ jobs:
       - name: Upload artifacts
         uses: actions/upload-artifact@v4
         with:
-          name: rk3188-uboot-gcc7
+          name: rk3188-uboot-linaro
           path: uboot-output/
