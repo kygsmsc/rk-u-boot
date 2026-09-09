@@ -48,23 +48,22 @@ jobs:
           fi
           sed -i 's/CONFIG_DEFAULT_DEVICE_TREE="rk3188-radxarock"/CONFIG_DEFAULT_DEVICE_TREE="rk3188-sangfor-adesk"/g' configs/rk3188_defconfig
 
-      # 编译
+      # 编译（使用 KCFLAGS 禁用 -Werror）
       - name: Build U-Boot
         run: |
           cd u-boot
           export ARCH=arm
           export CROSS_COMPILE=arm-linux-gnueabi-
+          export KCFLAGS="-Wno-error"
           
           make clean
           make rk3188_defconfig
           
-          # 禁用 WERROR（将警告视为错误），避免枚举不匹配警告导致编译失败
+          # 再次禁用 CONFIG_WERROR（防止 olddefconfig 重新启用）
           sed -i 's/CONFIG_WERROR=y/# CONFIG_WERROR is not set/g' .config
-          # 也关闭可能导致类似问题的其他警告选项（可选）
-          sed -i 's/CONFIG_MAKE_ALIGNED/# CONFIG_MAKE_ALIGNED is not set/g' .config
-          sed -i 's/CONFIG_MAKE_ALIGNED_64/# CONFIG_MAKE_ALIGNED_64 is not set/g' .config
-          
+          sed -i 's/CONFIG_WERROR=y/# CONFIG_WERROR is not set/g' .config
           make olddefconfig
+          
           make -j$(nproc)
           
           # 尝试生成 uboot.img（如果 boot_merger 存在）
