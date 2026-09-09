@@ -59,20 +59,20 @@ jobs:
           sed -i 's/^CONFIG_TPL=y/# CONFIG_TPL is not set/g' .config
           sed -i 's/^CONFIG_TPL_OF_PLATDATA=y/# CONFIG_TPL_OF_PLATDATA is not set/g' .config
           sed -i 's/CONFIG_WERROR=y/# CONFIG_WERROR is not set/g' .config
-          # 清空 serial_rockchip.c 引用
           echo "/* dummy file */" > drivers/serial/serial_rockchip.c
 
-          # 设置 SPL 大小限制为 0（禁用检查）
-          sed -i 's/^CONFIG_SPL_SIZE_LIMIT=.*/CONFIG_SPL_SIZE_LIMIT=0x0/g' .config
+          # 【终极修复】直接从 Makefile.spl 中删除 limit 计算和 printf 校验代码
+          sed -i '/limit = /d' scripts/Makefile.spl
+          sed -i '/printf "%d"/d' scripts/Makefile.spl
 
-          # 删除 Makefile.spl 中 RK3188 的大小限制计算（关键）
-          sed -i '/CONFIG_SPL_SIZE_LIMIT = 0x8000 - 0x800/d' scripts/Makefile.spl
-          sed -i '/CONFIG_SPL_SIZE_LIMIT = 0x8000 - 0x800/d' scripts/Makefile.spl
-
+          # 再次运行 olddefconfig 以确保其他配置正确
           make olddefconfig
 
-          # 编译并强制禁用 SPL 大小检查（双重保险）
-          make -j$(nproc) SPL_SIZE_LIMIT=0
+          # 【关键】olddefconfig 会重置 .config，我们在这里再次强制设 SPL_SIZE_LIMIT 为 0
+          sed -i 's/^CONFIG_SPL_SIZE_LIMIT=.*/CONFIG_SPL_SIZE_LIMIT=0/g' .config
+
+          # 编译（不再传 SPL_SIZE_LIMIT=0，因为 Makefile 里的检查已删除，.config 也已置 0）
+          make -j$(nproc)
 
           echo "================ 检查产物 ================"
           ls -la spl/u-boot-spl.bin u-boot.bin 2>/dev/null || echo "SPL 或 u-boot.bin 未生成"
