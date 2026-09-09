@@ -49,11 +49,12 @@ jobs:
           export ARCH=arm
           export CROSS_COMPILE=arm-linux-gnueabi-
           export KCFLAGS="-Wno-error"
+          export PATH=$PATH:$PWD/tools
 
           make clean
           make rk3188_defconfig
 
-          # 精简配置
+          # 禁用不需要的组件和报错
           sed -i 's/^CONFIG_SPL_PINCTRL=y/# CONFIG_SPL_PINCTRL is not set/g' .config
           sed -i 's/^CONFIG_SPL_OF_PLATDATA=y/# CONFIG_SPL_OF_PLATDATA is not set/g' .config
           sed -i 's/^CONFIG_TPL=y/# CONFIG_TPL is not set/g' .config
@@ -61,59 +62,87 @@ jobs:
           sed -i 's/CONFIG_WERROR=y/# CONFIG_WERROR is not set/g' .config
           echo "/* dummy file */" > drivers/serial/serial_rockchip.c
 
-          # 【终极修复】直接从 Makefile.spl 中删除 limit 计算和 printf 校验代码
+          # 从 Makefile 中移除大小限制检查代码
           sed -i '/limit = /d' scripts/Makefile.spl
           sed -i '/printf "%d"/d' scripts/Makefile.spl
 
-          # 再次运行 olddefconfig 以确保其他配置正确
           make olddefconfig
-
-          # 【关键】olddefconfig 会重置 .config，我们在这里再次强制设 SPL_SIZE_LIMIT 为 0
+          # 强制将 SPL 大小限制设为 0
           sed -i 's/^CONFIG_SPL_SIZE_LIMIT=.*/CONFIG_SPL_SIZE_LIMIT=0/g' .config
 
-          # 编译（不再传 SPL_SIZE_LIMIT=0，因为 Makefile 里的检查已删除，.config 也已置 0）
           make -j$(nproc)
 
-          echo "================ 检查产物 ================"
-          ls -la spl/u-boot-spl.bin u-boot.bin 2>/dev/null || echo "SPL 或 u-boot.bin 未生成"
+          echo "================ 检查编译产物 ================"
+          ls -la tpl/u-boot-tpl.bin spl/u-boot-spl.bin u-boot.bin u-boot-dtb.bin 2>/dev/null || true
 
-          # 尝试打包 uboot.img
+      # 新增：打包与加密步骤
+      - name: Package U-Boot
+        run: |
+          cd u-boot
+          # 确保路径正确，如果 tpl 未生成，需要检查配置
+          echo "================ 开始打包 ================"
+          # 1. 拼接 TPL 和 SPL
+          cat tpl/u-boot-tpl.bin > tplspl.bin
+          # 补零到 1020 字节 (BootROM 要求)
+          truncate -s 1020 tplspl.bin
+          # 加上 RK31 启动头
+          printf 'RK31' | dd of=tplspl.bin bs=1 count=4 conv=notrunc
+          cat spl/u-boot-spl.bin >> tplspl.bin
+          # 补零到 2048 字节 (BootROM 读取 2KB 页)
+          truncate -s 2048 tplspl.bin
+
+          # 2. 生成 RK3188Loader_miniall.bin (第一级 Loader，用于初始化 DDR)
           if [ -f tools/boot_merger ]; then
-            printf '%s\n' \
-              '[CHIP_NAME]' \
-              'NAME=RK3188' \
-              '[VERSION]' \
-              'MAJOR=2' \
-              'MINOR=3' \
-              '[CODE471_OPTION]' \
-              'NUM=1' \
-              'Path1=u-boot-dtb.bin' \
-              'Sleep=0' \
-              '[CODE472_OPTION]' \
-              'NUM=1' \
-              'Path1=u-boot-dtb.bin' \
-              'Sleep=0' \
-              '[LOADER_OPTION]' \
-              'NUM=2' \
-              'LOADER1=u-boot-spl.bin' \
-              'LOADER2=u-boot.bin' \
-              'FlashData=0x60000000' \
-              'FlashBoot=0x60000000' \
-              '[OUTPUT]' \
-              'NAME=uboot.img' > /tmp/RK3188MINIALL.ini
-            ./tools/boot_merger /tmp/RK3188MINIALL.ini
+            cat > /tmp/RK3188MINIALL.ini << 'EOF'
+[CHIP_NAME]
+NAME=RK31
+[VERSION]
+MAJOR=2
+MINOR=3
+[CODE471_OPTION]
+NUM=1
+Path1=tplspl.bin
+Sleep=0
+[CODE472_OPTION]
+NUM=1
+Path1=u-boot-dtb.bin
+Sleep=0
+[LOADER_OPTION]
+NUM=2
+LOADER1=FlashData
+LOADER2=FlashBoot
+FlashData=tplspl.bin
+FlashBoot=u-boot-dtb.bin
+[OUTPUT]
+PATH=RK3188Loader_miniall.bin
+EOF
+            # 执行 boot_merger 生成一级 Loader
+            ./tools/boot_merger --rc4 /tmp/RK3188MINIALL.ini
+            echo "RK3188Loader_miniall.bin 生成成功"
           else
-            echo "boot_merger not found, skip uboot.img"
+            echo "警告: 未找到 boot_merger 工具，无法生成 RK3188Loader_miniall.bin"
           fi
 
-          ls -la uboot.img u-boot.bin spl/u-boot-spl.bin 2>/dev/null || true
+          # 3. 生成 uboot.img (第二级 U-Boot，用于引导内核)
+          # 使用 mkimage 打包为 uboot.img
+          if [ -f u-boot-dtb.bin ]; then
+             tools/mkimage -n rk3188 -T rksd -d u-boot-dtb.bin uboot.img
+             echo "uboot.img 生成成功"
+          else
+             echo "错误: u-boot-dtb.bin 不存在，无法生成 uboot.img"
+          fi
+
+          # 列出所有生成的产物
+          echo "================ 最终产物 ================"
+          ls -la RK3188Loader_miniall.bin uboot.img u-boot.bin 2>/dev/null || true
 
       - name: Upload Artifacts
         uses: actions/upload-artifact@v4
         with:
           name: rk3188-uboot-package
           path: |
+            u-boot/RK3188Loader_miniall.bin
             u-boot/uboot.img
             u-boot/u-boot.bin
-            u-boot/spl/u-boot-spl.bin
+            u-boot/u-boot-dtb.bin
           if-no-files-found: warn
