@@ -1,0 +1,139 @@
+// SPDX-License-Identifier: (GPL-2.0+ OR MIT)
+/dts-v1/;
+#include "rk3188.dtsi"
+
+/ {
+    model = "Sangfor aDesk VDI (RK3188-PX3)";
+    compatible = "sangfor,adesk-vdi", "rockchip,rk3188";
+
+    chosen {
+        stdout-path = "serial0:115200n8";
+        bootargs = "console=ttyFIQ0,115200 earlycon=uart8250,mmio32,0x20064000,115200 root=/dev/mmcblk0p2 rootfstype=ext4 rootwait";
+    };
+
+    memory@60000000 {
+        device_type = "memory";
+        reg = <0x60000000 0x40000000>; /* 1GB DDR3 */
+    };
+
+    aliases {
+        serial0 = &uart0;
+        mmc0 = &emmc;
+    };
+
+    vcc_sys: vsys-regulator {
+        compatible = "regulator-fixed";
+        regulator-name = "vcc_sys";
+        regulator-min-microvolt = <5000000>;
+        regulator-max-microvolt = <5000000>;
+        regulator-always-on;
+        regulator-boot-on;
+        u-boot,dm-pre-reloc;
+    };
+
+    vcc_io: vcc-io-regulator {
+        compatible = "regulator-fixed";
+        regulator-name = "vcc_io";
+        regulator-min-microvolt = <3300000>;
+        regulator-max-microvolt = <3300000>;
+        regulator-always-on;
+        regulator-boot-on;
+        u-boot,dm-pre-reloc;
+        vin-supply = <&vcc_sys>;
+    };
+
+    vccq_emmc: emmc-vccq-regulator {
+        compatible = "regulator-fixed";
+        regulator-name = "vccq_emmc";
+        regulator-min-microvolt = <1800000>;
+        regulator-max-microvolt = <1800000>;
+        u-boot,dm-pre-reloc;
+        vin-supply = <&vcc_sys>;
+    };
+};
+
+&uart0 {
+    status = "okay";
+    u-boot,dm-pre-reloc;
+    pinctrl-0 = <&uart0_xfer>;
+    pinctrl-names = "default";
+};
+
+&emmc {
+    status = "okay";
+    u-boot,dm-pre-reloc;
+    bus-width = <8>;
+    cap-mmc-highspeed;
+    non-removable;
+    vmmc-supply = <&vcc_io>;
+    vqmmc-supply = <&vccq_emmc>;
+};
+
+&i2c1 {
+    status = "okay";
+    clock-frequency = <400000>;
+    u-boot,dm-pre-reloc;
+    pinctrl-0 = <&i2c1_xfer>;
+    pinctrl-names = "default";
+
+    rk808: pmic@1b {
+        compatible = "rockchip,rk808";
+        reg = <0x1b>;
+        interrupt-parent = <&gpio0>;
+        interrupts = <RK_PB3 IRQ_TYPE_LEVEL_LOW>;
+        u-boot,dm-pre-reloc;
+        rockchip,system-power-controller;
+        wakeup-source;
+
+        regulators {
+            vdd_cpu: DCDC_REG1 {
+                regulator-name = "vdd_cpu";
+                regulator-min-microvolt = <750000>;
+                regulator-max-microvolt = <1350000>;
+                regulator-always-on;
+                regulator-boot-on;
+                u-boot,dm-pre-reloc;
+            };
+            vdd_core: DCDC_REG2 {
+                regulator-name = "vdd_core";
+                regulator-min-microvolt = <850000>;
+                regulator-max-microvolt = <1250000>;
+                regulator-always-on;
+                regulator-boot-on;
+                u-boot,dm-pre-reloc;
+            };
+            vcc_ddr: DCDC_REG3 {
+                regulator-name = "vcc_ddr";
+                regulator-min-microvolt = <1200000>;
+                regulator-max-microvolt = <1200000>;
+                regulator-always-on;
+                regulator-boot-on;
+                u-boot,dm-pre-reloc;
+            };
+            DCDC_REG4 {
+                regulator-name = "vcc_io";
+                regulator-min-microvolt = <3300000>;
+                regulator-max-microvolt = <3300000>;
+                regulator-always-on;
+                regulator-boot-on;
+                u-boot,dm-pre-reloc;
+            };
+            vcc_lan: LDO_REG1 {
+                regulator-name = "vcc_lan";
+                regulator-min-microvolt = <3300000>;
+                regulator-max-microvolt = <3300000>;
+                regulator-always-on;
+                regulator-boot-on;
+                u-boot,dm-pre-reloc;
+            };
+            vdd_10: LDO_REG3 {
+                regulator-name = "vdd_10";
+                regulator-min-microvolt = <1000000>;
+                regulator-max-microvolt = <1000000>;
+                regulator-always-on;
+                regulator-boot-on;
+                u-boot,dm-pre-reloc;
+            };
+        };
+    };
+};
