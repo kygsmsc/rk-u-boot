@@ -1,4 +1,4 @@
-name: Build U-Boot for RK3188 (Manual with fixed CFLAGS)
+name: Build U-Boot for RK3188 (Manual with .config tweak)
 
 on:
   push:
@@ -37,29 +37,31 @@ jobs:
         run: |
           git clone --depth 1 https://github.com/rockchip-linux/rkbin.git
 
-      - name: Configure and build U-Boot
+      - name: Configure, tweak config, and build U-Boot
         run: |
           cd u-boot
-          # 配置为 Radxa Rock (RK3188)
+          # 1. 配置为 Radxa Rock (RK3188)
           make rock_defconfig CROSS_COMPILE=arm-linux-gnueabihf-
-          # 覆盖 CFLAGS：指定 armv7-a（Cortex-A9）并禁用 -Werror
+          # 2. 修正架构为 ARMv7 (Cortex-A9)
+          sed -i 's/CONFIG_ARM_ARCH=5/CONFIG_ARM_ARCH=7/' .config
+          # 确保启用 CPU_V7
+          echo "CONFIG_CPU_V7=y" >> .config
+          # 3. 编译，强制覆盖 CFLAGS 和 KCFLAGS
           make CROSS_COMPILE=arm-linux-gnueabihf- \
-               CFLAGS="-march=armv7-a -Wno-error" \
+               KCFLAGS="-march=armv7-a -Wno-error" \
+               KBUILD_CFLAGS="-march=armv7-a -Wno-error" \
                -j$(nproc)
-          # 打包为 Rockchip 格式的 uboot.img
+          # 4. 打包为 Rockchip 格式的 uboot.img
           tools/mkimage -n rk3188 -T rksd -d spl/u-boot-spl.bin u-boot.img
           cat u-boot.bin >> u-boot.img
 
       - name: Prepare artifacts
         run: |
           mkdir -p uboot-output
-          # 复制生成的 uboot.img
           cp u-boot/u-boot.img uboot-output/
-          # 也保存 spl 和 u-boot.bin 供参考
           cp u-boot/spl/u-boot-spl.bin uboot-output/ 2>/dev/null || true
           cp u-boot/u-boot.bin uboot-output/ 2>/dev/null || true
-          # 尝试从 rkbin 获取 loader（如果有），但通常我们只需要 uboot.img
-          # 生成 parameter.txt 示例（可根据实际修改）
+          # 生成 parameter.txt 示例
           cat > uboot-output/parameter.txt << EOF
           FIRMWARE_VER:1.0.0
           MACHINE_MODEL:rk3188
