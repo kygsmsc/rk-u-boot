@@ -1,4 +1,4 @@
-name: Build U-Boot for RK3188 (Manual)
+name: Build U-Boot for RK3188 (Manual with fixed CFLAGS)
 
 on:
   push:
@@ -27,13 +27,13 @@ jobs:
             git \
             wget \
             python3 \
-            python3-pyelftools  # 用于处理 ELF
+            python3-pyelftools
 
       - name: Clone Rockchip U-Boot
         run: |
           git clone --depth 1 https://github.com/rockchip-linux/u-boot.git
 
-      - name: Clone rkbin
+      - name: Clone rkbin (for potential binaries)
         run: |
           git clone --depth 1 https://github.com/rockchip-linux/rkbin.git
 
@@ -42,32 +42,24 @@ jobs:
           cd u-boot
           # 配置为 Radxa Rock (RK3188)
           make rock_defconfig CROSS_COMPILE=arm-linux-gnueabihf-
-          # 编译 U-Boot (SPL + main)
-          make CROSS_COMPILE=arm-linux-gnueabihf- -j$(nproc)
-          # 生成 u-boot.img (Rockchip 格式)
+          # 覆盖 CFLAGS：指定 armv7-a（Cortex-A9）并禁用 -Werror
+          make CROSS_COMPILE=arm-linux-gnueabihf- \
+               CFLAGS="-march=armv7-a -Wno-error" \
+               -j$(nproc)
+          # 打包为 Rockchip 格式的 uboot.img
           tools/mkimage -n rk3188 -T rksd -d spl/u-boot-spl.bin u-boot.img
           cat u-boot.bin >> u-boot.img
-
-      - name: Create loader (using rkbin tools)
-        run: |
-          cd rkbin
-          # 使用 rkbin 中的工具生成 loader
-          ./tools/boot_merger --help || true  # 检查工具是否存在
-          # 实际上，更简单的方式是用 rkdeveloptool 或直接使用已生成的 loader
-          # 但我们可以手动组合：rkbin 的 bin 文件 + u-boot spl
-          # 由于没有现成的 rk3188_loader, 可借助 rkbin 中的 DDR 初始化文件
-          # 这里我们直接复制 u-boot 生成的 uboot.img 作为 loader（部分情况下可用）
-          cp ../u-boot/u-boot.img ./rk3188_loader.bin
 
       - name: Prepare artifacts
         run: |
           mkdir -p uboot-output
-          # 复制关键输出
+          # 复制生成的 uboot.img
           cp u-boot/u-boot.img uboot-output/
+          # 也保存 spl 和 u-boot.bin 供参考
           cp u-boot/spl/u-boot-spl.bin uboot-output/ 2>/dev/null || true
-          # 尝试从 rkbin 获取 loader 模板（如果存在）
-          cp rkbin/rk3188_loader.bin uboot-output/ 2>/dev/null || echo "No loader, using uboot.img as fallback"
-          # 生成 parameter.txt 示例
+          cp u-boot/u-boot.bin uboot-output/ 2>/dev/null || true
+          # 尝试从 rkbin 获取 loader（如果有），但通常我们只需要 uboot.img
+          # 生成 parameter.txt 示例（可根据实际修改）
           cat > uboot-output/parameter.txt << EOF
           FIRMWARE_VER:1.0.0
           MACHINE_MODEL:rk3188
