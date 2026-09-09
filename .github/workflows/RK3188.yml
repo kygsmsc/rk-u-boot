@@ -5,15 +5,12 @@ on:
     branches: [ main, master ]
   pull_request:
     branches: [ main, master ]
-  workflow_dispatch:   # 手动触发
+  workflow_dispatch:
 
 jobs:
   build-uboot:
     runs-on: ubuntu-22.04
     steps:
-      - name: Checkout repository (optional, if you have custom files)
-        uses: actions/checkout@v4
-
       - name: Install dependencies
         run: |
           sudo apt-get update
@@ -28,57 +25,34 @@ jobs:
             u-boot-tools \
             cpio \
             git \
-            wget \
-            xz-utils
+            wget
 
-      - name: Download Linaro GCC 7.5 (recommended for RK3188)
-        run: |
-          wget -q https://releases.linaro.org/components/toolchain/binaries/7.5-2019.12/arm-linux-gnueabi/gcc-linaro-7.5.0-2019.12-x86_64_arm-linux-gnueabi.tar.xz
-          tar -xf gcc-linaro-7.5.0-2019.12-x86_64_arm-linux-gnueabi.tar.xz
-          echo "$PWD/gcc-linaro-7.5.0-2019.12-x86_64_arm-linux-gnueabi/bin" >> $GITHUB_PATH
-          echo "CROSS_COMPILE=arm-linux-gnueabi-" >> $GITHUB_ENV
-
-      - name: Clone Rockchip U-Boot (with rkbin submodule)
+      - name: Clone Rockchip U-Boot (with submodules)
         run: |
           git clone --depth 1 --recursive https://github.com/rockchip-linux/u-boot.git
-          cd u-boot
 
-      - name: Build U-Boot for RK3188 using make.sh
+      - name: Build U-Boot for RK3188
         run: |
           cd u-boot
-          # 使用 Rockchip 提供的 make.sh 脚本，指定 rk3188
-          # 该脚本会自动编译并打包生成 loader、uboot.img、trust.img 等
+          # 使用 Rockchip 提供的 make.sh，指定 rk3188
+          # 如果 rk3188 不可用，可尝试 rock（Radxa Rock）
           ./make.sh rk3188
 
       - name: List generated files
         run: |
           echo "Generated files in u-boot/:"
-          ls -l u-boot/*.bin u-boot/*.img 2>/dev/null || true
-          echo "Also check u-boot/rockdev/ for packaged images"
-          ls -l u-boot/rockdev/ 2>/dev/null || true
+          ls -l u-boot/*.bin u-boot/*.img 2>/dev/null || echo "No files in root"
+          echo "Checking rockdev/ directory:"
+          ls -l u-boot/rockdev/ 2>/dev/null || echo "No rockdev directory"
 
       - name: Prepare artifacts
         run: |
           mkdir -p uboot-output
-          # 复制关键输出文件（如果存在）
-          cp u-boot/rk3188_loader_*.bin uboot-output/ 2>/dev/null || echo "No loader bin found"
-          cp u-boot/uboot.img uboot-output/ 2>/dev/null || echo "No uboot.img found"
-          cp u-boot/trust.img uboot-output/ 2>/dev/null || echo "No trust.img found"
-          # 有时 make.sh 会将打包好的镜像放在 rockdev/ 下
+          cp u-boot/rk3188_loader_*.bin uboot-output/ 2>/dev/null || echo "No loader bin"
+          cp u-boot/uboot.img uboot-output/ 2>/dev/null || echo "No uboot.img"
+          cp u-boot/trust.img uboot-output/ 2>/dev/null || echo "No trust.img"
+          # 如果 make.sh 将输出放在 rockdev/，也复制过来
           cp u-boot/rockdev/*.img uboot-output/ 2>/dev/null || echo "No rockdev images"
-          # 生成一个简单的 parameter.txt 示例（可选）
-          cat > uboot-output/parameter.txt << EOF
-          FIRMWARE_VER:1.0.0
-          MACHINE_MODEL:rk3188
-          MACHINE_ID:007
-          MANUFACTURER: Rockchip
-          MAGIC: 0x5041524B
-          ATAG: 0x60000800
-          MACHINE: 3188
-          CHECK_MASK: 0x80
-          PWR_HLD: 0,0,A,0,1
-          CMDLINE:console=ttyFIQ0,115200 earlyprintk root=/dev/mmcblk0p2 rootfstype=ext4 rootwait
-          EOF
 
       - name: Upload artifacts
         uses: actions/upload-artifact@v4
