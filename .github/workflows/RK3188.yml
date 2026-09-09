@@ -13,11 +13,11 @@ jobs:
   build:
     runs-on: ubuntu-latest
     steps:
-      # 第一步：检出你自己的仓库，包含 DTS 文件
+      # 检出当前仓库（包含 DTS 文件）
       - name: Checkout current repo
         uses: actions/checkout@v4
 
-      # 第二步：安装工具链
+      # 安装工具链
       - name: Install Toolchain
         run: |
           sudo apt-get update
@@ -28,35 +28,45 @@ jobs:
             swig python3-dev \
             bison flex
 
-      # 第三步：克隆 Rockchip U-Boot 到子目录
+      # 克隆 Rockchip U-Boot
       - name: Clone Rockchip U-Boot
         run: |
           git clone https://github.com/rockchip-linux/u-boot.git u-boot
           cd u-boot
           git submodule update --init --recursive
 
-      # 第四步：复制 DTS 并修改配置
+      # 复制 DTS 并修改配置
       - name: Setup DTS and Config
         run: |
           cd u-boot
           cp "$GITHUB_WORKSPACE/rk3188-sangfor-adesk.dts" arch/arm/dts/rk3188-sangfor-adesk.dts
           echo "" >> arch/arm/dts/Makefile
           echo "dtb-\$(CONFIG_ARCH_ROCKCHIP) += rk3188-sangfor-adesk.dtb" >> arch/arm/dts/Makefile
-          # 如果 rk3188_defconfig 不存在，则从 rock_defconfig 创建
+          # 若无 rk3188_defconfig 则从 rock_defconfig 创建
           if [ ! -f configs/rk3188_defconfig ]; then
             cp configs/rock_defconfig configs/rk3188_defconfig
           fi
           sed -i 's/CONFIG_DEFAULT_DEVICE_TREE="rk3188-radxarock"/CONFIG_DEFAULT_DEVICE_TREE="rk3188-sangfor-adesk"/g' configs/rk3188_defconfig
 
-      # 第五步：编译
+      # 编译
       - name: Build U-Boot
         run: |
           cd u-boot
           export ARCH=arm
           export CROSS_COMPILE=arm-linux-gnueabi-
+          
           make clean
           make rk3188_defconfig
+          
+          # 禁用 WERROR（将警告视为错误），避免枚举不匹配警告导致编译失败
+          sed -i 's/CONFIG_WERROR=y/# CONFIG_WERROR is not set/g' .config
+          # 也关闭可能导致类似问题的其他警告选项（可选）
+          sed -i 's/CONFIG_MAKE_ALIGNED/# CONFIG_MAKE_ALIGNED is not set/g' .config
+          sed -i 's/CONFIG_MAKE_ALIGNED_64/# CONFIG_MAKE_ALIGNED_64 is not set/g' .config
+          
+          make olddefconfig
           make -j$(nproc)
+          
           # 尝试生成 uboot.img（如果 boot_merger 存在）
           if [ -f tools/boot_merger ]; then
             printf '%s\n' \
@@ -85,9 +95,10 @@ jobs:
           else
             echo "boot_merger not found, skip uboot.img"
           fi
+          
           ls -la uboot.img u-boot.bin spl/u-boot-spl.bin 2>/dev/null || true
 
-      # 第六步：上传产物
+      # 上传产物
       - name: Upload Artifacts
         uses: actions/upload-artifact@v4
         with:
