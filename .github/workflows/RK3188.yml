@@ -30,16 +30,10 @@ jobs:
           ref: master
           submodules: recursive
 
-      - name: Copy Custom DTS
+      - name: Setup DTS and Config
         run: |
-          # 从仓库根目录复制DTS
-          cp $GITHUB_WORKSPACE/rk3188-sangfor-adesk.dts arch/arm/dts/rk3188-sangfor-adesk.dts
-          
-          # 在Makefile中添加DTB目标
-          echo "" >> arch/arm/dts/Makefile
+          cp "$GITHUB_WORKSPACE/rk3188-sangfor-adesk.dts" arch/arm/dts/rk3188-sangfor-adesk.dts
           echo "dtb-\$(CONFIG_ARCH_ROCKCHIP) += rk3188-sangfor-adesk.dtb" >> arch/arm/dts/Makefile
-          
-          # 处理defconfig（若无rk3188_defconfig则创建）
           if [ ! -f configs/rk3188_defconfig ]; then
             cp configs/rock_defconfig configs/rk3188_defconfig
           fi
@@ -49,46 +43,38 @@ jobs:
         run: |
           export ARCH=arm
           export CROSS_COMPILE=arm-linux-gnueabi-
-          
           make clean
           make rk3188_defconfig
           make -j$(nproc)
-          
-          # 尝试生成uboot.img（若boot_merger存在）
+          # 尝试打包uboot.img（如果boot_merger存在）
           if [ -f tools/boot_merger ]; then
-            # 创建简单的RK3188MINIALL.ini
-            cat > /tmp/RK3188MINIALL.ini << 'EOF'
-[CHIP_NAME]
-NAME=RK3188
-
-[VERSION]
-MAJOR=2
-MINOR=3
-
-[CODE471_OPTION]
-NUM=1
-Path1=u-boot-dtb.bin
-Sleep=0
-
-[CODE472_OPTION]
-NUM=1
-Path1=u-boot-dtb.bin
-Sleep=0
-
-[LOADER_OPTION]
-NUM=2
-LOADER1=u-boot-spl.bin
-LOADER2=u-boot.bin
-FlashData=0x60000000
-FlashBoot=0x60000000
-
-[OUTPUT]
-NAME=uboot.img
-EOF
+            printf '%s\n' \
+              '[CHIP_NAME]' \
+              'NAME=RK3188' \
+              '[VERSION]' \
+              'MAJOR=2' \
+              'MINOR=3' \
+              '[CODE471_OPTION]' \
+              'NUM=1' \
+              'Path1=u-boot-dtb.bin' \
+              'Sleep=0' \
+              '[CODE472_OPTION]' \
+              'NUM=1' \
+              'Path1=u-boot-dtb.bin' \
+              'Sleep=0' \
+              '[LOADER_OPTION]' \
+              'NUM=2' \
+              'LOADER1=u-boot-spl.bin' \
+              'LOADER2=u-boot.bin' \
+              'FlashData=0x60000000' \
+              'FlashBoot=0x60000000' \
+              '[OUTPUT]' \
+              'NAME=uboot.img' > /tmp/RK3188MINIALL.ini
             ./tools/boot_merger /tmp/RK3188MINIALL.ini
+          else
+            echo "boot_merger not found, skip uboot.img"
           fi
-          
-          ls -la uboot.img u-boot.bin u-boot-rockchip.bin spl/u-boot-spl.bin 2>/dev/null || true
+          ls -la uboot.img u-boot.bin spl/u-boot-spl.bin 2>/dev/null || true
 
       - name: Upload Artifacts
         uses: actions/upload-artifact@v4
@@ -97,6 +83,5 @@ EOF
           path: |
             uboot.img
             u-boot.bin
-            u-boot-rockchip.bin
             spl/u-boot-spl.bin
           if-no-files-found: warn
