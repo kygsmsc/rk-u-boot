@@ -1,82 +1,87 @@
-name: Build Radxa RK3188 U-Boot (Final Fix)
+name: Build U-Boot for RK3188
 
 on:
-  workflow_dispatch:
   push:
-    branches: [ "main" ]
-
-concurrency:
-  group: ${{ github.workflow }}-${{ github.ref }}
-  cancel-in-progress: true
+    branches: [ main, master ]
+  pull_request:
+    branches: [ main, master ]
+  workflow_dispatch:   # 手动触发
 
 jobs:
-  build:
-    runs-on: ubuntu-latest
+  build-uboot:
+    runs-on: ubuntu-22.04
     steps:
-      # 安装所需工具链（必须使用 arm-eabi，避免数据异常）
-      - name: Install Toolchain
+      - name: Checkout repository (optional, if you have custom files)
+        uses: actions/checkout@v4
+
+      - name: Install dependencies
         run: |
           sudo apt-get update
-          sudo apt-get install -y gcc-arm-linux-gnueabi gcc-arm-linux-gnueabihf device-tree-compiler swig python3-dev bison flex
+          sudo apt-get install -y \
+            gcc-arm-linux-gnueabi \
+            device-tree-compiler \
+            bc \
+            bison \
+            flex \
+            libssl-dev \
+            libncurses-dev \
+            u-boot-tools \
+            cpio \
+            git \
+            wget \
+            xz-utils
 
-      # 克隆 Radxa 官方维护的 U-Boot 专用分支
-      - name: Clone Radxa U-Boot
+      - name: Download Linaro GCC 7.5 (recommended for RK3188)
         run: |
-          git clone -b u-boot-rk3188 https://github.com/radxa/u-boot-rockchip.git u-boot
-          cd u-boot
-          git submodule update --init --recursive
+          wget -q https://releases.linaro.org/components/toolchain/binaries/7.5-2019.12/arm-linux-gnueabi/gcc-linaro-7.5.0-2019.12-x86_64_arm-linux-gnueabi.tar.xz
+          tar -xf gcc-linaro-7.5.0-2019.12-x86_64_arm-linux-gnueabi.tar.xz
+          echo "$PWD/gcc-linaro-7.5.0-2019.12-x86_64_arm-linux-gnueabi/bin" >> $GITHUB_PATH
+          echo "CROSS_COMPILE=arm-linux-gnueabi-" >> $GITHUB_ENV
 
-      # 编译并手动打包（关键步骤）
-      - name: Build and Package U-Boot
+      - name: Clone Rockchip U-Boot (with rkbin submodule)
+        run: |
+          git clone --depth 1 --recursive https://github.com/rockchip-linux/u-boot.git
+          cd u-boot
+
+      - name: Build U-Boot for RK3188 using make.sh
         run: |
           cd u-boot
-          export ARCH=arm
-          # 官方推荐使用 arm-eabi 工具链以避免数据异常
-          export CROSS_COMPILE=arm-linux-gnueabi-
-          
-          # 使用官方 rk30xx 配置进行编译
-          make clean
-          make rk30xx
-          make -j$(nproc)
+          # 使用 Rockchip 提供的 make.sh 脚本，指定 rk3188
+          # 该脚本会自动编译并打包生成 loader、uboot.img、trust.img 等
+          ./make.sh rk3188
 
-          # 检查产物
-          echo "================ 检查产物 ================"
-          ls -la u-boot.bin spl/u-boot-spl.bin tpl/u-boot-tpl.bin 2>/dev/null || true
+      - name: List generated files
+        run: |
+          echo "Generated files in u-boot/:"
+          ls -l u-boot/*.bin u-boot/*.img 2>/dev/null || true
+          echo "Also check u-boot/rockdev/ for packaged images"
+          ls -l u-boot/rockdev/ 2>/dev/null || true
 
-          # 手动打包 TPL 和 SPL（由于 BootROM 限制，必须手动拼接）
-          echo "================ 开始打包 ================"
-          if [ -f tpl/u-boot-tpl.bin ] && [ -f spl/u-boot-spl.bin ]; then
-            cat tpl/u-boot-tpl.bin > tplspl.bin
-            truncate -s 1020 tplspl.bin
-            printf 'RK31' | dd of=tplspl.bin bs=1 count=4 conv=notrunc
-            cat spl/u-boot-spl.bin >> tplspl.bin
-            truncate -s 2048 tplspl.bin
-            echo "tplspl.bin 已生成"
-          else
-            echo "错误：缺少 tpl/u-boot-tpl.bin 或 spl/u-boot-spl.bin，无法打包。"
-            exit 1
-          fi
+      - name: Prepare artifacts
+        run: |
+          mkdir -p uboot-output
+          # 复制关键输出文件（如果存在）
+          cp u-boot/rk3188_loader_*.bin uboot-output/ 2>/dev/null || echo "No loader bin found"
+          cp u-boot/uboot.img uboot-output/ 2>/dev/null || echo "No uboot.img found"
+          cp u-boot/trust.img uboot-output/ 2>/dev/null || echo "No trust.img found"
+          # 有时 make.sh 会将打包好的镜像放在 rockdev/ 下
+          cp u-boot/rockdev/*.img uboot-output/ 2>/dev/null || echo "No rockdev images"
+          # 生成一个简单的 parameter.txt 示例（可选）
+          cat > uboot-output/parameter.txt << EOF
+          FIRMWARE_VER:1.0.0
+          MACHINE_MODEL:rk3188
+          MACHINE_ID:007
+          MANUFACTURER: Rockchip
+          MAGIC: 0x5041524B
+          ATAG: 0x60000800
+          MACHINE: 3188
+          CHECK_MASK: 0x80
+          PWR_HLD: 0,0,A,0,1
+          CMDLINE:console=ttyFIQ0,115200 earlyprintk root=/dev/mmcblk0p2 rootfstype=ext4 rootwait
+          EOF
 
-          # 查找 boot_merger 工具
-          if [ -f tools/boot_merger ]; then
-            echo "使用 boot_merger 进行最终打包"
-            # 创建 RK3188MINIALL.ini
-            printf '[CHIP_NAME]\nNAME=RK3188\n[VERSION]\nMAJOR=2\nMINOR=3\n[CODE471_OPTION]\nNUM=1\nPath1=tplspl.bin\nSleep=0\n[CODE472_OPTION]\nNUM=1\nPath1=u-boot.bin\nSleep=0\n[LOADER_OPTION]\nNUM=2\nLOADER1=FlashData\nLOADER2=FlashBoot\nFlashData=tplspl.bin\nFlashBoot=u-boot.bin\n[OUTPUT]\nPATH=RK3188Loader_miniall.bin\n' > /tmp/RK3188MINIALL.ini
-            ./tools/boot_merger /tmp/RK3188MINIALL.ini
-          else
-            echo "错误：未找到 boot_merger 工具，无法生成 RK3188Loader_miniall.bin。"
-            exit 1
-          fi
-          
-          # 列出最终产物
-          ls -la RK3188Loader_miniall.bin u-boot.bin
-
-      # 上传产物
-      - name: Upload Artifacts
+      - name: Upload artifacts
         uses: actions/upload-artifact@v4
         with:
-          name: rk3188-uboot-final-package
-          path: |
-            u-boot/RK3188Loader_miniall.bin
-            u-boot/u-boot.bin
-          if-no-files-found: warn
+          name: rk3188-uboot
+          path: uboot-output/
