@@ -1,4 +1,4 @@
-name: Build U-Boot for RK3188 (Manual with .config tweak)
+name: Build U-Boot for RK3188 (with GCC 7)
 
 on:
   push:
@@ -11,11 +11,11 @@ jobs:
   build-uboot:
     runs-on: ubuntu-22.04
     steps:
-      - name: Install dependencies
+      - name: Install dependencies and GCC 7 toolchain
         run: |
           sudo apt-get update
           sudo apt-get install -y \
-            gcc-arm-linux-gnueabihf \
+            gcc-7-arm-linux-gnueabihf \
             device-tree-compiler \
             bc \
             bison \
@@ -28,30 +28,32 @@ jobs:
             wget \
             python3 \
             python3-pyelftools
+          # 将默认的 arm-linux-gnueabihf-gcc 指向 gcc-7
+          sudo ln -sf /usr/bin/arm-linux-gnueabihf-gcc-7 /usr/bin/arm-linux-gnueabihf-gcc
+          sudo ln -sf /usr/bin/arm-linux-gnueabihf-g++-7 /usr/bin/arm-linux-gnueabihf-g++ 2>/dev/null || true
 
       - name: Clone Rockchip U-Boot
         run: |
           git clone --depth 1 https://github.com/rockchip-linux/u-boot.git
 
-      - name: Clone rkbin (for potential binaries)
+      - name: Clone rkbin (optional)
         run: |
           git clone --depth 1 https://github.com/rockchip-linux/rkbin.git
 
-      - name: Configure, tweak config, and build U-Boot
+      - name: Configure and build U-Boot
         run: |
           cd u-boot
-          # 1. 配置为 Radxa Rock (RK3188)
+          # 配置
           make rock_defconfig CROSS_COMPILE=arm-linux-gnueabihf-
-          # 2. 修正架构为 ARMv7 (Cortex-A9)
+          # 可选：强制设为 ARMv7（但 GCC 7 也能处理 ARMv5，所以可省略）
           sed -i 's/CONFIG_ARM_ARCH=5/CONFIG_ARM_ARCH=7/' .config
-          # 确保启用 CPU_V7
           echo "CONFIG_CPU_V7=y" >> .config
-          # 3. 编译，强制覆盖 CFLAGS 和 KCFLAGS
+          # 编译（禁用 -Werror 以防警告被当作错误）
           make CROSS_COMPILE=arm-linux-gnueabihf- \
-               KCFLAGS="-march=armv7-a -Wno-error" \
-               KBUILD_CFLAGS="-march=armv7-a -Wno-error" \
+               KCFLAGS="-Wno-error" \
+               KBUILD_CFLAGS="-Wno-error" \
                -j$(nproc)
-          # 4. 打包为 Rockchip 格式的 uboot.img
+          # 打包成 Rockchip 格式
           tools/mkimage -n rk3188 -T rksd -d spl/u-boot-spl.bin u-boot.img
           cat u-boot.bin >> u-boot.img
 
@@ -61,7 +63,7 @@ jobs:
           cp u-boot/u-boot.img uboot-output/
           cp u-boot/spl/u-boot-spl.bin uboot-output/ 2>/dev/null || true
           cp u-boot/u-boot.bin uboot-output/ 2>/dev/null || true
-          # 生成 parameter.txt 示例
+          # parameter.txt 示例
           cat > uboot-output/parameter.txt << EOF
           FIRMWARE_VER:1.0.0
           MACHINE_MODEL:rk3188
@@ -78,5 +80,5 @@ jobs:
       - name: Upload artifacts
         uses: actions/upload-artifact@v4
         with:
-          name: rk3188-uboot-manual
+          name: rk3188-uboot-gcc7
           path: uboot-output/
