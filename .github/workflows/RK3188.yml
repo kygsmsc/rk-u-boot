@@ -48,7 +48,7 @@ jobs:
           fi
           sed -i 's/CONFIG_DEFAULT_DEVICE_TREE="rk3188-radxarock"/CONFIG_DEFAULT_DEVICE_TREE="rk3188-sangfor-adesk"/g' configs/rk3188_defconfig
 
-      # 编译 U-Boot
+      # 编译 U-Boot（包含精简配置）
       - name: Build U-Boot
         run: |
           cd u-boot
@@ -59,19 +59,35 @@ jobs:
           make clean
           make rk3188_defconfig
           
-          # 彻底禁用 TPL 和 SPL_OF_PLATDATA（避免 dtoc 运行）
-          sed -i 's/^CONFIG_TPL=y/# CONFIG_TPL is not set/g' .config
+          # 【精简配置开始】
+          # 1. 禁用 SPL pinctrl，可大幅节省空间（RK3188 SPL 不需要引脚控制）[citation:12]
+          sed -i 's/^CONFIG_SPL_PINCTRL=y/# CONFIG_SPL_PINCTRL is not set/g' .config
+          
+          # 2. 禁用 SPL_OF_PLATDATA，避免 dtoc 解析错误并减小尺寸
           sed -i 's/^CONFIG_SPL_OF_PLATDATA=y/# CONFIG_SPL_OF_PLATDATA is not set/g' .config
+          
+          # 3. 禁用 TPL（如果之前启用）
+          sed -i 's/^CONFIG_TPL=y/# CONFIG_TPL is not set/g' .config
           sed -i 's/^CONFIG_TPL_OF_PLATDATA=y/# CONFIG_TPL_OF_PLATDATA is not set/g' .config
           
-          # 禁用 WERROR
+          # 4. 禁用将警告视为错误
           sed -i 's/CONFIG_WERROR=y/# CONFIG_WERROR is not set/g' .config
           
-          # ★ 关键修复：清空 serial_rockchip.c，避免引用旧 dtd 结构体
+          # 5. 清空 serial_rockchip.c，移除旧的 of-platdata 结构体引用
           echo "/* dummy file to avoid old dtoc struct references */" > drivers/serial/serial_rockchip.c
+          echo "已精简 SPL 配置并清理旧驱动文件。"
+          
+          # 6. 设置正确的 RK3188 SPL 大小限制（29KB = 0x8000 - 0x800）[citation:4]
+          sed -i 's/^CONFIG_SPL_SIZE_LIMIT=.*/CONFIG_SPL_SIZE_LIMIT=0x7800/g' .config
+          echo "已将 SPL 大小限制设为 0x7800 (30KB)。"
+          # 【精简配置结束】
           
           make olddefconfig
           make -j$(nproc)
+          
+          # 检查 SPL 是否还在超限
+          echo "================ 检查 SPL 大小 ================"
+          ls -la spl/u-boot-spl.bin 2>/dev/null || echo "SPL 未生成"
           
           # 尝试生成 uboot.img（如果 boot_merger 存在）
           if [ -f tools/boot_merger ]; then
