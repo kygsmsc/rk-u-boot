@@ -27,17 +27,20 @@ jobs:
             git \
             wget
 
-      - name: Clone Rockchip U-Boot (with submodules)
+      - name: Clone Rockchip U-Boot
         run: |
-          git clone --depth 1 --recursive https://github.com/rockchip-linux/u-boot.git
+          git clone --depth 1 https://github.com/rockchip-linux/u-boot.git
+
+      # 单独克隆 rkbin 到项目根目录，以便 u-boot/make.sh 能访问 ../rkbin
+      - name: Clone rkbin repository
+        run: |
+          git clone --depth 1 https://github.com/rockchip-linux/rkbin.git
 
       - name: Build U-Boot for RK3188
         run: |
           cd u-boot
-          # 创建软链接，使 make.sh 能找到 ../rkbin
-          ln -sf $PWD/rkbin ../rkbin
-          # 显式设置环境变量（双重保险）
-          export RKBIN_DIR=$PWD/rkbin
+          # 环境变量指定 rkbin 位置（可选，但确保脚本能找到）
+          export RKBIN_DIR=$PWD/../rkbin
           # 使用 rock 配置（RK3188）
           ./make.sh rock
 
@@ -51,11 +54,10 @@ jobs:
       - name: Prepare artifacts
         run: |
           mkdir -p uboot-output
-          # 复制可能产生的文件（根据实际生成的文件名调整）
+          # 复制可能产生的文件
           cp u-boot/*_loader_*.bin uboot-output/ 2>/dev/null || echo "No loader bin"
           cp u-boot/uboot.img uboot-output/ 2>/dev/null || echo "No uboot.img"
           cp u-boot/trust.img uboot-output/ 2>/dev/null || echo "No trust.img"
-          # 某些版本输出在 rockdev/
           cp u-boot/rockdev/*.img uboot-output/ 2>/dev/null || echo "No rockdev images"
 
       - name: Upload artifacts
