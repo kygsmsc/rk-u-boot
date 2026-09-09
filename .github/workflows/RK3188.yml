@@ -49,32 +49,35 @@ jobs:
           export ARCH=arm
           export CROSS_COMPILE=arm-linux-gnueabi-
           export KCFLAGS="-Wno-error"
-          
+
           make clean
           make rk3188_defconfig
-          
-          # 精简 SPL 配置
+
+          # 精简配置
           sed -i 's/^CONFIG_SPL_PINCTRL=y/# CONFIG_SPL_PINCTRL is not set/g' .config
           sed -i 's/^CONFIG_SPL_OF_PLATDATA=y/# CONFIG_SPL_OF_PLATDATA is not set/g' .config
           sed -i 's/^CONFIG_TPL=y/# CONFIG_TPL is not set/g' .config
           sed -i 's/^CONFIG_TPL_OF_PLATDATA=y/# CONFIG_TPL_OF_PLATDATA is not set/g' .config
           sed -i 's/CONFIG_WERROR=y/# CONFIG_WERROR is not set/g' .config
-          
-          # 清空遗留的 serial_rockchip.c 引用（防编译错误）
+          # 清空 serial_rockchip.c 引用
           echo "/* dummy file */" > drivers/serial/serial_rockchip.c
-          
-          # 强制禁用 SPL 大小限制检查
+
+          # 设置 SPL 大小限制为 0（禁用检查）
           sed -i 's/^CONFIG_SPL_SIZE_LIMIT=.*/CONFIG_SPL_SIZE_LIMIT=0x0/g' .config
-          
+
+          # 删除 Makefile.spl 中 RK3188 的大小限制计算（关键）
+          sed -i '/CONFIG_SPL_SIZE_LIMIT = 0x8000 - 0x800/d' scripts/Makefile.spl
+          sed -i '/CONFIG_SPL_SIZE_LIMIT = 0x8000 - 0x800/d' scripts/Makefile.spl
+
           make olddefconfig
-          
-          # 关键：编译时传入 SPL_SIZE_LIMIT=0，彻底跳过大小检查
+
+          # 编译并强制禁用 SPL 大小检查（双重保险）
           make -j$(nproc) SPL_SIZE_LIMIT=0
-          
+
           echo "================ 检查产物 ================"
           ls -la spl/u-boot-spl.bin u-boot.bin 2>/dev/null || echo "SPL 或 u-boot.bin 未生成"
-          
-          # 尝试打包 uboot.img（如果 boot_merger 存在）
+
+          # 尝试打包 uboot.img
           if [ -f tools/boot_merger ]; then
             printf '%s\n' \
               '[CHIP_NAME]' \
@@ -102,7 +105,7 @@ jobs:
           else
             echo "boot_merger not found, skip uboot.img"
           fi
-          
+
           ls -la uboot.img u-boot.bin spl/u-boot-spl.bin 2>/dev/null || true
 
       - name: Upload Artifacts
