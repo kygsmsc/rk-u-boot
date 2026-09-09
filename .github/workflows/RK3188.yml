@@ -14,23 +14,23 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
-      # Step 1: 安装必要的构建工具和依赖
+      # Step 1: 安装编译工具链和依赖（包括软浮点工具链）
       - name: Install Toolchain
         run: |
           sudo apt-get update
           sudo apt-get install -y \
+            gcc-arm-linux-gnueabi \
             gcc-arm-linux-gnueabihf \
             device-tree-compiler \
             swig python3-dev \
             bison flex
 
-      # Step 2: 拉取 Rockchip 官方 U-Boot 仓库（包含 boot_merger 和打包脚本）
-      # 注意：官方仓库可能包含特定的分支和补丁，需确保其支持 RK3188
+      # Step 2: 拉取 Rockchip 官方 U-Boot 仓库
       - name: Checkout Rockchip U-Boot
         uses: actions/checkout@v4
         with:
           repository: rockchip-linux/u-boot
-          ref: master # 如果有针对RK3188的稳定分支，建议替换
+          ref: master
           submodules: recursive
 
       # Step 3: 写入自定义 DTS 并修改配置
@@ -85,32 +85,85 @@ jobs:
               };
           };
           EOF
-          # 将DTS加入构建列表
+
+          # 将 DTS 加入构建列表
           echo "" >> arch/arm/dts/Makefile
           echo "dtb-\$(CONFIG_ARCH_ROCKCHIP) += rk3188-sangfor-adesk.dtb" >> arch/arm/dts/Makefile
 
-      # Step 4: 编译 U-Boot (必须使用官方 make.sh 以支持后续打包)
+          # 处理 defconfig：如果 rk3188_defconfig 不存在，则从 rock_defconfig 复制并修改默认 DTB
+          if [ ! -f configs/rk3188_defconfig ]; then
+            echo "rk3188_defconfig 不存在，从 rock_defconfig 创建"
+            cp configs/rock_defconfig configs/rk3188_defconfig
+          fi
+          # 替换默认 DTB 名称为我们的自定义 DTB
+          sed -i 's/CONFIG_DEFAULT_DEVICE_TREE="rk3188-radxarock"/CONFIG_DEFAULT_DEVICE_TREE="rk3188-sangfor-adesk"/g' configs/rk3188_defconfig
+
+      # Step 4: 编译 U-Boot（使用标准 make 流程，不使用 make.sh）
       - name: Build U-Boot
         run: |
           export ARCH=arm
-          export CROSS_COMPILE=arm-linux-gnueabihf-
-          
-          # 针对RK3188进行构建
-          # 注意：官方SDK可能默认使用 rk3188_defconfig，若无则用 rock_defconfig 并确保 DTB 修改生效
-          make rk3188_defconfig 2>/dev/null || make rock_defconfig
-          
-          # 编译并打包 (make.sh 会处理后续的 boot_merger 步骤)
-          # 如果 make.sh 不可用或报错，需手动执行：
-          # ./tools/boot_merger ./tools/rk_tools/RKBOOT/RK3188MINIALL.ini
-          ./make.sh rk3188
+          # 注意：官方仓库内部可能使用 arm-linux-gnueabi-，但我们已经安装了软浮点工具链
+          export CROSS_COMPILE=arm-linux-gnueabi-
 
-      # Step 5: 上传可直接由 RKDevTool 识别的产物
+          make clean
+          make rk3188_defconfig
+          make -j$(nproc)
+
+          # 查找 boot_merger 和相应的 ini 文件
+          echo "查找 boot_merger 工具和 ini 文件"
+          find . -name "boot_merger" -o -name "*MINIALL.ini" 2>/dev/null || true
+          # 尝试编译 boot_merger（如果需要）
+          if [ ! -x tools/boot_merger ]; then
+            make tools/boot_merger
+          fi
+
+          # 生成 uboot.img：使用 boot_merger 合并 SPL 和 U-Boot
+          # 通常需要 RK3188MINIALL.ini 文件，这里尝试从仓库获取
+          INI_FILE=$(find . -name "RK3188MINIALL.ini" | head -1)
+          if [ -z "$INI_FILE" ]; then
+            # 如果找不到，创建一个简单的配置文件
+            cat > /tmp/RK3188MINIALL.ini << 'EOF'
+[CHIP_NAME]
+NAME=RK3188
+
+[VERSION]
+MAJOR=2
+MINOR=3
+
+[CODE471_OPTION]
+NUM=1
+Path1=u-boot-dtb.bin
+Sleep=0
+
+[CODE472_OPTION]
+NUM=1
+Path1=u-boot-dtb.bin
+Sleep=0
+
+[LOADER_OPTION]
+NUM=2
+LOADER1=u-boot-spl.bin
+LOADER2=u-boot.bin
+FlashData=0x60000000
+FlashBoot=0x60000000
+
+[OUTPUT]
+NAME=uboot.img
+EOF
+            INI_FILE="/tmp/RK3188MINIALL.ini"
+          fi
+
+          # 执行 boot_merger
+          ./tools/boot_merger $INI_FILE
+          ls -la uboot.img u-boot-rockchip.bin u-boot.bin 2>/dev/null || true
+
+      # Step 5: 上传产物
       - name: Upload Artifacts
         uses: actions/upload-artifact@v4
         with:
-          name: rk3188-uboot-official-package
+          name: rk3188-uboot-package
           path: |
             uboot.img
-            RK3188Loader_miniall.bin
+            u-boot.bin
             u-boot-rockchip.bin
           if-no-files-found: warn
