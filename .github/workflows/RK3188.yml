@@ -74,12 +74,10 @@ jobs:
           sed -i 's/CONFIG_WERROR=y/# CONFIG_WERROR is not set/g' .config
           echo "/* dummy file */" > drivers/serial/serial_rockchip.c
 
-          # 【核心修复】恢复原始 Makefile.spl 结构，然后精确替换硬编码的大小限制公式
+          # 恢复原始 Makefile.spl 结构，然后彻底删除所有大小限制相关行（防止结构破坏）
           git checkout -- scripts/Makefile.spl
-          # 将 `CONFIG_SPL_SIZE_LIMIT = 0x8000 - 0x800` 替换为 `CONFIG_SPL_SIZE_LIMIT = 0`
-          sed -i 's/CONFIG_SPL_SIZE_LIMIT = 0x8000 - 0x800/CONFIG_SPL_SIZE_LIMIT = 0/g' scripts/Makefile.spl
-          # 同样处理 TPL 可能存在的公式
-          sed -i 's/CONFIG_TPL_SIZE_LIMIT = 0x8000 - 0x800/CONFIG_TPL_SIZE_LIMIT = 0/g' scripts/Makefile.spl
+          sed -i '/CONFIG_SPL_SIZE_LIMIT/d' scripts/Makefile.spl
+          sed -i '/CONFIG_TPL_SIZE_LIMIT/d' scripts/Makefile.spl
 
           # 确保 .config 中的限制也为 0
           sed -i 's/^CONFIG_SPL_SIZE_LIMIT=.*/CONFIG_SPL_SIZE_LIMIT=0/g' .config
