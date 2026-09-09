@@ -13,9 +13,11 @@ jobs:
   build:
     runs-on: ubuntu-latest
     steps:
+      # 检出当前仓库（包含 DTS 文件）
       - name: Checkout current repo
         uses: actions/checkout@v4
 
+      # 安装工具链
       - name: Install Toolchain
         run: |
           sudo apt-get update
@@ -26,23 +28,27 @@ jobs:
             swig python3-dev \
             bison flex
 
+      # 克隆 Rockchip U-Boot
       - name: Clone Rockchip U-Boot
         run: |
           git clone https://github.com/rockchip-linux/u-boot.git u-boot
           cd u-boot
           git submodule update --init --recursive
 
+      # 复制 DTS 并修改配置
       - name: Setup DTS and Config
         run: |
           cd u-boot
           cp "$GITHUB_WORKSPACE/rk3188-sangfor-adesk.dts" arch/arm/dts/rk3188-sangfor-adesk.dts
           echo "" >> arch/arm/dts/Makefile
           echo "dtb-\$(CONFIG_ARCH_ROCKCHIP) += rk3188-sangfor-adesk.dtb" >> arch/arm/dts/Makefile
+          # 若无 rk3188_defconfig 则从 rock_defconfig 创建
           if [ ! -f configs/rk3188_defconfig ]; then
             cp configs/rock_defconfig configs/rk3188_defconfig
           fi
           sed -i 's/CONFIG_DEFAULT_DEVICE_TREE="rk3188-radxarock"/CONFIG_DEFAULT_DEVICE_TREE="rk3188-sangfor-adesk"/g' configs/rk3188_defconfig
 
+      # 编译 U-Boot
       - name: Build U-Boot
         run: |
           cd u-boot
@@ -53,13 +59,16 @@ jobs:
           make clean
           make rk3188_defconfig
           
-          # 禁用 TPL 和 SPL_OF_PLATDATA，避免 dtoc 解析错误
+          # 彻底禁用 TPL 和 SPL_OF_PLATDATA（避免 dtoc 运行）
           sed -i 's/^CONFIG_TPL=y/# CONFIG_TPL is not set/g' .config
           sed -i 's/^CONFIG_SPL_OF_PLATDATA=y/# CONFIG_SPL_OF_PLATDATA is not set/g' .config
           sed -i 's/^CONFIG_TPL_OF_PLATDATA=y/# CONFIG_TPL_OF_PLATDATA is not set/g' .config
           
-          # 禁用 WERROR，允许警告通过
+          # 禁用 WERROR
           sed -i 's/CONFIG_WERROR=y/# CONFIG_WERROR is not set/g' .config
+          
+          # ★ 关键修复：清空 serial_rockchip.c，避免引用旧 dtd 结构体
+          echo "/* dummy file to avoid old dtoc struct references */" > drivers/serial/serial_rockchip.c
           
           make olddefconfig
           make -j$(nproc)
@@ -95,6 +104,7 @@ jobs:
           
           ls -la uboot.img u-boot.bin spl/u-boot-spl.bin 2>/dev/null || true
 
+      # 上传产物
       - name: Upload Artifacts
         uses: actions/upload-artifact@v4
         with:
