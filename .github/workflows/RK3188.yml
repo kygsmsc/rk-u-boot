@@ -2,37 +2,81 @@ name: Build Radxa RK3188 U-Boot (Final Fix)
 
 on:
   workflow_dispatch:
+  push:
+    branches: [ "main" ]
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
 
 jobs:
   build:
     runs-on: ubuntu-latest
     steps:
+      # 安装所需工具链（必须使用 arm-eabi，避免数据异常）
       - name: Install Toolchain
         run: |
           sudo apt-get update
           sudo apt-get install -y gcc-arm-linux-gnueabi gcc-arm-linux-gnueabihf device-tree-compiler swig python3-dev bison flex
 
+      # 克隆 Radxa 官方维护的 U-Boot 专用分支
       - name: Clone Radxa U-Boot
         run: |
-          git clone https://github.com/radxa/u-boot.git -b v2017.09-rockchip u-boot
+          git clone -b u-boot-rk3188 https://github.com/radxa/u-boot-rockchip.git u-boot
           cd u-boot
           git submodule update --init --recursive
 
-      - name: Build U-Boot
+      # 编译并手动打包（关键步骤）
+      - name: Build and Package U-Boot
         run: |
           cd u-boot
           export ARCH=arm
+          # 官方推荐使用 arm-eabi 工具链以避免数据异常
           export CROSS_COMPILE=arm-linux-gnueabi-
-          make rock_defconfig
+          
+          # 使用官方 rk30xx 配置进行编译
+          make clean
+          make rk30xx
           make -j$(nproc)
-          # 尝试生成 Loader
+
+          # 检查产物
+          echo "================ 检查产物 ================"
           ls -la u-boot.bin spl/u-boot-spl.bin tpl/u-boot-tpl.bin 2>/dev/null || true
 
+          # 手动打包 TPL 和 SPL（由于 BootROM 限制，必须手动拼接）
+          echo "================ 开始打包 ================"
+          if [ -f tpl/u-boot-tpl.bin ] && [ -f spl/u-boot-spl.bin ]; then
+            cat tpl/u-boot-tpl.bin > tplspl.bin
+            truncate -s 1020 tplspl.bin
+            printf 'RK31' | dd of=tplspl.bin bs=1 count=4 conv=notrunc
+            cat spl/u-boot-spl.bin >> tplspl.bin
+            truncate -s 2048 tplspl.bin
+            echo "tplspl.bin 已生成"
+          else
+            echo "错误：缺少 tpl/u-boot-tpl.bin 或 spl/u-boot-spl.bin，无法打包。"
+            exit 1
+          fi
+
+          # 查找 boot_merger 工具
+          if [ -f tools/boot_merger ]; then
+            echo "使用 boot_merger 进行最终打包"
+            # 创建 RK3188MINIALL.ini
+            printf '[CHIP_NAME]\nNAME=RK3188\n[VERSION]\nMAJOR=2\nMINOR=3\n[CODE471_OPTION]\nNUM=1\nPath1=tplspl.bin\nSleep=0\n[CODE472_OPTION]\nNUM=1\nPath1=u-boot.bin\nSleep=0\n[LOADER_OPTION]\nNUM=2\nLOADER1=FlashData\nLOADER2=FlashBoot\nFlashData=tplspl.bin\nFlashBoot=u-boot.bin\n[OUTPUT]\nPATH=RK3188Loader_miniall.bin\n' > /tmp/RK3188MINIALL.ini
+            ./tools/boot_merger /tmp/RK3188MINIALL.ini
+          else
+            echo "错误：未找到 boot_merger 工具，无法生成 RK3188Loader_miniall.bin。"
+            exit 1
+          fi
+          
+          # 列出最终产物
+          ls -la RK3188Loader_miniall.bin u-boot.bin
+
+      # 上传产物
       - name: Upload Artifacts
         uses: actions/upload-artifact@v4
         with:
-          name: radxa-uboot-binaries
+          name: rk3188-uboot-final-package
           path: |
+            u-boot/RK3188Loader_miniall.bin
             u-boot/u-boot.bin
-            u-boot/spl/u-boot-spl.bin
-            u-boot/tpl/u-boot-tpl.bin
+          if-no-files-found: warn
