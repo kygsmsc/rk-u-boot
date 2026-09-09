@@ -38,10 +38,7 @@ jobs:
           cp "$GITHUB_WORKSPACE/rk3188-sangfor-adesk.dts" arch/arm/dts/rk3188-sangfor-adesk.dts
           echo "" >> arch/arm/dts/Makefile
           echo "dtb-\$(CONFIG_ARCH_ROCKCHIP) += rk3188-sangfor-adesk.dtb" >> arch/arm/dts/Makefile
-          
-          # 直接复制官方的 rock_defconfig，确保包含完整的 RK3188 支持
           cp configs/rock_defconfig configs/rk3188_defconfig
-          # 替换默认 DTB
           sed -i 's/CONFIG_DEFAULT_DEVICE_TREE="rk3188-radxarock"/CONFIG_DEFAULT_DEVICE_TREE="rk3188-sangfor-adesk"/g' configs/rk3188_defconfig
 
       - name: Build U-Boot
@@ -52,28 +49,23 @@ jobs:
           export KCFLAGS="-Wno-error"
           export PATH=$PATH:$PWD/tools
 
-          # 彻底清理，确保没有任何残留配置
           make clean
           make distclean
 
-          # 使用官方的 rock_defconfig
           make rk3188_defconfig
 
-          # 强制开启 TPL 及 RK3188 必需支持
+          # 强制开启 TPL 和 RK3188 支持
           sed -i 's/^# CONFIG_TPL is not set/CONFIG_TPL=y/g' .config
           sed -i 's/^# CONFIG_ROCKCHIP_RK3188 is not set/CONFIG_ROCKCHIP_RK3188=y/g' .config
           sed -i 's/^# CONFIG_TARGET_ROCK is not set/CONFIG_TARGET_ROCK=y/g' .config
-
-          # 确认关键配置存在（缺失则直接追加）
           grep -q "^CONFIG_TPL=y" .config || echo "CONFIG_TPL=y" >> .config
           grep -q "^CONFIG_ROCKCHIP_RK3188=y" .config || echo "CONFIG_ROCKCHIP_RK3188=y" >> .config
           grep -q "^CONFIG_TARGET_ROCK=y" .config || echo "CONFIG_TARGET_ROCK=y" >> .config
 
-          # ★★★ 彻底禁用 of-platdata，避免 dtoc 工具解析 clocks 报错 ★★★
+          # 彻底禁用 of-platdata（只修改配置，不删除任何 Makefile 行）
           sed -i 's/^CONFIG_SPL_OF_PLATDATA=y/# CONFIG_SPL_OF_PLATDATA is not set/g' .config
           sed -i 's/^CONFIG_TPL_OF_PLATDATA=y/# CONFIG_TPL_OF_PLATDATA is not set/g' .config
           sed -i 's/^CONFIG_OF_PLATDATA=y/# CONFIG_OF_PLATDATA is not set/g' .config
-          # 如果配置中根本没有这些行，则强制追加为“未设置”
           grep -q "CONFIG_SPL_OF_PLATDATA" .config || echo "# CONFIG_SPL_OF_PLATDATA is not set" >> .config
           grep -q "CONFIG_TPL_OF_PLATDATA" .config || echo "# CONFIG_TPL_OF_PLATDATA is not set" >> .config
           grep -q "CONFIG_OF_PLATDATA" .config || echo "# CONFIG_OF_PLATDATA is not set" >> .config
@@ -82,37 +74,31 @@ jobs:
           sed -i 's/CONFIG_WERROR=y/# CONFIG_WERROR is not set/g' .config
           echo "/* dummy file */" > drivers/serial/serial_rockchip.c
 
-          # 【关键修复】删除 Makefile.spl 中所有调用 dtoc 的规则，确保它不再运行
-          sed -i '/dtoc/d' scripts/Makefile.spl
-          sed -i '/dt-platdata/d' scripts/Makefile.spl
-          sed -i '/dt-structs-gen/d' scripts/Makefile.spl
+          # 恢复被破坏的 Makefile.spl（关键！）
+          git checkout -- scripts/Makefile.spl
 
-          # 为 TPL 补上 dts/dt.dtb 依赖，防止并行编译失败
-          sed -i 's|tpl/u-boot-tpl.bin:.*|tpl/u-boot-tpl.bin: tools prepare dts/dt.dtb|' Makefile
-
-          # 移除大小限制计算错误
-          sed -i '/limit = /d' scripts/Makefile.spl
-          sed -i '/printf "%d"/d' scripts/Makefile.spl
+          # 只设置大小限制为0，不删除任何行
+          sed -i 's/^CONFIG_SPL_SIZE_LIMIT=.*/CONFIG_SPL_SIZE_LIMIT=0/g' .config
+          sed -i 's/^CONFIG_TPL_SIZE_LIMIT=.*/CONFIG_TPL_SIZE_LIMIT=0/g' .config
           sed -i 's/^CONFIG_SPL_SIZE_LIMIT=.*/CONFIG_SPL_SIZE_LIMIT=0/g' .config
           sed -i 's/^CONFIG_TPL_SIZE_LIMIT=.*/CONFIG_TPL_SIZE_LIMIT=0/g' .config
 
           make olddefconfig
 
-          # olddefconfig 后再次强制设置关键项和限制，确保不被覆盖
-          sed -i 's/^CONFIG_TPL=y/CONFIG_TPL=y/g' .config
+          # olddefconfig 后再次强制禁用 of-platdata 和设置大小限制
           sed -i 's/^CONFIG_SPL_OF_PLATDATA=y/# CONFIG_SPL_OF_PLATDATA is not set/g' .config
           sed -i 's/^CONFIG_TPL_OF_PLATDATA=y/# CONFIG_TPL_OF_PLATDATA is not set/g' .config
           sed -i 's/^CONFIG_OF_PLATDATA=y/# CONFIG_OF_PLATDATA is not set/g' .config
           sed -i 's/^CONFIG_SPL_SIZE_LIMIT=.*/CONFIG_SPL_SIZE_LIMIT=0/g' .config
           sed -i 's/^CONFIG_TPL_SIZE_LIMIT=.*/CONFIG_TPL_SIZE_LIMIT=0/g' .config
+          sed -i 's/^CONFIG_TPL=y/CONFIG_TPL=y/g' .config
 
-          # 编译（强制单线程，避免依赖竞态）
           make -j1
 
           echo "================ 检查产物 ================"
           ls -la tpl/u-boot-tpl.bin spl/u-boot-spl.bin u-boot.bin u-boot-dtb.bin 2>/dev/null || true
           if [ ! -f tpl/u-boot-tpl.bin ]; then
-            echo "错误：TPL 仍未生成，请检查 CONFIG_TPL=y 是否生效。"
+            echo "错误：TPL 仍未生成。"
             grep "CONFIG_TPL" .config || true
             exit 1
           fi
