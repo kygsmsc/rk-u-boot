@@ -14,23 +14,28 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
-      # Step 1: 安装交叉编译工具链
+      # Step 1: 安装交叉编译工具链和必要依赖
       - name: Install Toolchain
         run: |
           sudo apt-get update
-          sudo apt-get install -y gcc-arm-linux-gnueabihf device-tree-compiler swig python3-dev bison flex
+          sudo apt-get install -y \
+            gcc-arm-linux-gnueabihf \
+            device-tree-compiler \
+            swig python3-dev \
+            bison flex \
+            libgnutls28-dev \
+            uuid-dev
 
       # Step 2: 手动克隆主线 U-Boot 源码
       - name: Clone Upstream U-Boot
         run: |
           git clone https://gitlab.denx.de/u-boot/u-boot.git .
-          # 切换到最新稳定版本（可选，默认 master）
+          # 如果希望固定版本，可取消下一行注释
           # git checkout v2025.04
 
       # Step 3: 写入定制 DTS 并修改配置
       - name: Customize DTS for Sangfor aDesk
         run: |
-          # 创建 U-Boot 专用的精简版 DTS 文件
           cat > arch/arm/dts/rk3188-sangfor-adesk.dts << 'EOF'
           /dts-v1/;
           #include "rk3188.dtsi"
@@ -197,13 +202,11 @@ jobs:
 
           make clean
 
-          # 使用 RK3188 官方支持的 rock_defconfig (radxa rock)
           make rock_defconfig
 
-          # 编译 U-Boot
           make -j$(nproc)
 
-          # 列出所有生成的二进制文件
+          # 列出产物
           echo "========== 生成的产物 =========="
           ls -la u-boot.bin u-boot.img idbloader.img spl/u-boot-spl.bin tpl/u-boot-tpl.bin 2>/dev/null || true
           ls -la *.bin 2>/dev/null || true
