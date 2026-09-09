@@ -13,6 +13,11 @@ jobs:
   build:
     runs-on: ubuntu-latest
     steps:
+      # 第一步：检出你自己的仓库，包含 DTS 文件
+      - name: Checkout current repo
+        uses: actions/checkout@v4
+
+      # 第二步：安装工具链
       - name: Install Toolchain
         run: |
           sudo apt-get update
@@ -23,30 +28,36 @@ jobs:
             swig python3-dev \
             bison flex
 
-      - name: Checkout Rockchip U-Boot
-        uses: actions/checkout@v4
-        with:
-          repository: rockchip-linux/u-boot
-          ref: master
-          submodules: recursive
+      # 第三步：克隆 Rockchip U-Boot 到子目录
+      - name: Clone Rockchip U-Boot
+        run: |
+          git clone https://github.com/rockchip-linux/u-boot.git u-boot
+          cd u-boot
+          git submodule update --init --recursive
 
+      # 第四步：复制 DTS 并修改配置
       - name: Setup DTS and Config
         run: |
+          cd u-boot
           cp "$GITHUB_WORKSPACE/rk3188-sangfor-adesk.dts" arch/arm/dts/rk3188-sangfor-adesk.dts
+          echo "" >> arch/arm/dts/Makefile
           echo "dtb-\$(CONFIG_ARCH_ROCKCHIP) += rk3188-sangfor-adesk.dtb" >> arch/arm/dts/Makefile
+          # 如果 rk3188_defconfig 不存在，则从 rock_defconfig 创建
           if [ ! -f configs/rk3188_defconfig ]; then
             cp configs/rock_defconfig configs/rk3188_defconfig
           fi
           sed -i 's/CONFIG_DEFAULT_DEVICE_TREE="rk3188-radxarock"/CONFIG_DEFAULT_DEVICE_TREE="rk3188-sangfor-adesk"/g' configs/rk3188_defconfig
 
+      # 第五步：编译
       - name: Build U-Boot
         run: |
+          cd u-boot
           export ARCH=arm
           export CROSS_COMPILE=arm-linux-gnueabi-
           make clean
           make rk3188_defconfig
           make -j$(nproc)
-          # 尝试打包uboot.img（如果boot_merger存在）
+          # 尝试生成 uboot.img（如果 boot_merger 存在）
           if [ -f tools/boot_merger ]; then
             printf '%s\n' \
               '[CHIP_NAME]' \
@@ -76,12 +87,13 @@ jobs:
           fi
           ls -la uboot.img u-boot.bin spl/u-boot-spl.bin 2>/dev/null || true
 
+      # 第六步：上传产物
       - name: Upload Artifacts
         uses: actions/upload-artifact@v4
         with:
           name: rk3188-uboot-package
           path: |
-            uboot.img
-            u-boot.bin
-            spl/u-boot-spl.bin
+            u-boot/uboot.img
+            u-boot/u-boot.bin
+            u-boot/spl/u-boot-spl.bin
           if-no-files-found: warn
