@@ -14,6 +14,228 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
+      # Step 1: 安装交叉编译工具链
+      - name: Install Toolchain
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y gcc-arm-linux-gnueabihf device-tree-compiler swig python3-dev bison flex
+
+      # Step 2: 手动克隆主线 U-Boot 源码
+      - name: Clone Upstream U-Boot
+        run: |
+          git clone https://gitlab.denx.de/u-boot/u-boot.git .
+          # 切换到最新稳定版本（可选，默认 master）
+          # git checkout v2025.04
+
+      # Step 3: 写入定制 DTS 并修改配置
+      - name: Customize DTS for Sangfor aDesk
+        run: |
+          # 创建 U-Boot 专用的精简版 DTS 文件
+          cat > arch/arm/dts/rk3188-sangfor-adesk.dts << 'EOF'
+          /dts-v1/;
+          #include "rk3188.dtsi"
+
+          / {
+              model = "Sangfor aDesk VDI (RK3188-PX3)";
+              compatible = "sangfor,adesk-vdi", "rockchip,rk3188";
+
+              chosen {
+                  stdout-path = "serial0:115200n8";
+                  bootargs = "console=ttyFIQ0,115200 earlycon=uart8250,mmio32,0x20064000,115200 root=/dev/mmcblk0p2 rootfstype=ext4 rootwait";
+              };
+
+              memory@60000000 {
+                  device_type = "memory";
+                  reg = <0x60000000 0x40000000>; /* 1GB DDR3 */
+              };
+
+              aliases {
+                  serial0 = &uart0;
+                  mmc0 = &emmc;
+              };
+
+              vcc_sys: vsys-regulator {
+                  compatible = "regulator-fixed";
+                  regulator-name = "vcc_sys";
+                  regulator-min-microvolt = <5000000>;
+                  regulator-max-microvolt = <5000000>;
+                  regulator-always-on;
+                  regulator-boot-on;
+                  u-boot,dm-pre-reloc;
+              };
+
+              vcc_io: vcc-io-regulator {
+                  compatible = "regulator-fixed";
+                  regulator-name = "vcc_io";
+                  regulator-min-microvolt = <3300000>;
+                  regulator-max-microvolt = <3300000>;
+                  regulator-always-on;
+                  regulator-boot-on;
+                  u-boot,dm-pre-reloc;
+                  vin-supply = <&vcc_sys>;
+              };
+
+              vccq_emmc: emmc-vccq-regulator {
+                  compatible = "regulator-fixed";
+                  regulator-name = "vccq_emmc";
+                  regulator-min-microvolt = <1800000>;
+                  regulator-max-microvolt = <1800000>;
+                  u-boot,dm-pre-reloc;
+                  vin-supply = <&vcc_sys>;
+              };
+          };
+
+          &uart0 {
+              status = "okay";
+              u-boot,dm-pre-reloc;
+              pinctrl-0 = <&uart0_xfer>;
+              pinctrl-names = "default";
+          };
+
+          &emmc {
+              status = "okay";
+              u-boot,dm-pre-reloc;
+              bus-width = <8>;
+              cap-mmc-highspeed;
+              non-removable;
+              vmmc-supply = <&vcc_io>;
+              vqmmc-supply = <&vccq_emmc>;
+          };
+
+          &i2c1 {
+              status = "okay";
+              clock-frequency = <400000>;
+              u-boot,dm-pre-reloc;
+              pinctrl-0 = <&i2c1_xfer>;
+              pinctrl-names = "default";
+
+              rk808: pmic@1b {
+                  compatible = "rockchip,rk808";
+                  reg = <0x1b>;
+                  interrupt-parent = <&gpio0>;
+                  interrupts = <RK_PB3 IRQ_TYPE_LEVEL_LOW>;
+                  u-boot,dm-pre-reloc;
+                  rockchip,system-power-controller;
+                  wakeup-source;
+
+                  regulators {
+                      vdd_cpu: DCDC_REG1 {
+                          regulator-name = "vdd_cpu";
+                          regulator-min-microvolt = <750000>;
+                          regulator-max-microvolt = <1350000>;
+                          regulator-always-on;
+                          regulator-boot-on;
+                          u-boot,dm-pre-reloc;
+                      };
+                      vdd_core: DCDC_REG2 {
+                          regulator-name = "vdd_core";
+                          regulator-min-microvolt = <850000>;
+                          regulator-max-microvolt = <1250000>;
+                          regulator-always-on;
+                          regulator-boot-on;
+                          u-boot,dm-pre-reloc;
+                      };
+                      vcc_ddr: DCDC_REG3 {
+                          regulator-name = "vcc_ddr";
+                          regulator-min-microvolt = <1200000>;
+                          regulator-max-microvolt = <1200000>;
+                          regulator-always-on;
+                          regulator-boot-on;
+                          u-boot,dm-pre-reloc;
+                      };
+                      DCDC_REG4 {
+                          regulator-name = "vcc_io";
+                          regulator-min-microvolt = <3300000>;
+                          regulator-max-microvolt = <3300000>;
+                          regulator-always-on;
+                          regulator-boot-on;
+                          u-boot,dm-pre-reloc;
+                      };
+                      vcc_lan: LDO_REG1 {
+                          regulator-name = "vcc_lan";
+                          regulator-min-microvolt = <3300000>;
+                          regulator-max-microvolt = <3300000>;
+                          regulator-always-on;
+                          regulator-boot-on;
+                          u-boot,dm-pre-reloc;
+                      };
+                      vdd_10: LDO_REG3 {
+                          regulator-name = "vdd_10";
+                          regulator-min-microvolt = <1000000>;
+                          regulator-max-microvolt = <1000000>;
+                          regulator-always-on;
+                          regulator-boot-on;
+                          u-boot,dm-pre-reloc;
+                      };
+                  };
+              };
+
+              hym8563: rtc@51 {
+                  compatible = "haoyu,hym8563";
+                  reg = <0x51>;
+                  interrupt-parent = <&gpio0>;
+                  interrupts = <RK_PB5 IRQ_TYPE_EDGE_FALLING>;
+                  u-boot,dm-pre-reloc;
+                  #clock-cells = <0>;
+                  wakeup-source;
+              };
+          };
+          EOF
+
+          # 在主线 Makefile 中添加 DTB 目标
+          echo "" >> arch/arm/dts/Makefile
+          echo "dtb-\$(CONFIG_ARCH_ROCKCHIP) += rk3188-sangfor-adesk.dtb" >> arch/arm/dts/Makefile
+
+          # 修改 rock_defconfig 默认使用新 DTB
+          sed -i 's/CONFIG_DEFAULT_DEVICE_TREE="rk3188-radxarock"/CONFIG_DEFAULT_DEVICE_TREE="rk3188-sangfor-adesk"/g' configs/rock_defconfig
+
+      # Step 4: 清理、配置并编译 U-Boot
+      - name: Build U-Boot
+        run: |
+          export ARCH=arm
+          export CROSS_COMPILE=arm-linux-gnueabihf-
+
+          make clean
+
+          # 使用 RK3188 官方支持的 rock_defconfig (radxa rock)
+          make rock_defconfig
+
+          # 编译 U-Boot
+          make -j$(nproc)
+
+          # 列出所有生成的二进制文件
+          echo "========== 生成的产物 =========="
+          ls -la u-boot.bin u-boot.img idbloader.img spl/u-boot-spl.bin tpl/u-boot-tpl.bin 2>/dev/null || true
+          ls -la *.bin 2>/dev/null || true
+
+      # Step 5: 上传编译产物
+      - name: Upload Artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: rk3188-upstream-uboot-binaries
+          path: |
+            u-boot.bin
+            u-boot.img
+            idbloader.img
+            spl/u-boot-spl.bin
+            tpl/u-boot-tpl.bin
+            u-boot-rockchip.bin
+          if-no-files-found: warnname: Build Upstream U-Boot for RK3188
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [ "main" ]
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+
+    steps:
       # Step 1: 拉取主线 U-Boot 源码
       - name: Checkout Upstream U-Boot Source
         uses: actions/checkout@v4
