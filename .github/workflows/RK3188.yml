@@ -35,14 +35,23 @@ jobs:
         run: |
           git clone --depth 1 https://github.com/rockchip-linux/rkbin.git
 
+      - name: Create fake toolchain directory with symlinks
+        run: |
+          # 创建脚本期望的目录
+          mkdir -p prebuilts/gcc/linux-x86/arm/gcc-linaro-6.3.1-2017.05-x86_64_arm-linux-gnueabihf/bin
+          cd prebuilts/gcc/linux-x86/arm/gcc-linaro-6.3.1-2017.05-x86_64_arm-linux-gnueabihf/bin
+          # 将系统工具链软链接到该目录
+          for tool in /usr/bin/arm-linux-gnueabihf-*; do
+            ln -sf $tool .
+          done
+          # 确保 arm-linux-gnueabihf-gcc 存在
+          ln -sf /usr/bin/arm-linux-gnueabihf-gcc arm-linux-gnueabihf-gcc 2>/dev/null || true
+
       - name: Build U-Boot for RK3188
         run: |
           cd u-boot
-          # 设置工具链路径和前缀
-          export GCC_PATH=/usr/bin
-          export CROSS_COMPILE=arm-linux-gnueabihf-
           export RKBIN_DIR=$PWD/../rkbin
-          # 使用 rock 配置
+          # 此处不再需要设置 GCC_PATH，因为 make.sh 将使用我们创建的路径
           ./make.sh rock
 
       - name: List generated files
