@@ -19,7 +19,7 @@ jobs:
         uses: actions/checkout@v4
         with:
           # 使用 Denx 的官方主线仓库
-          repository: https://gitlab.denx.de/u-boot/u-boot.git
+          repository: https://github.com/rockchip-linux/u-boot.git
           ref: master
           submodules: recursive
           clean: true
