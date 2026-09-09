@@ -1,146 +1,38 @@
-name: Build RK3188 U-Boot for RKDevTool
+name: Build Radxa RK3188 U-Boot (Final Fix)
 
 on:
   workflow_dispatch:
-  push:
-    branches: [ "main" ]
-
-concurrency:
-  group: ${{ github.workflow }}-${{ github.ref }}
-  cancel-in-progress: true
 
 jobs:
   build:
     runs-on: ubuntu-latest
     steps:
-      - name: Checkout current repo
-        uses: actions/checkout@v4
-
       - name: Install Toolchain
         run: |
           sudo apt-get update
-          sudo apt-get install -y \
-            gcc-arm-linux-gnueabi \
-            gcc-arm-linux-gnueabihf \
-            device-tree-compiler \
-            swig python3-dev \
-            bison flex
+          sudo apt-get install -y gcc-arm-linux-gnueabi gcc-arm-linux-gnueabihf device-tree-compiler swig python3-dev bison flex
 
-      - name: Clone Rockchip U-Boot
+      - name: Clone Radxa U-Boot
         run: |
-          git clone https://github.com/rockchip-linux/u-boot.git u-boot
+          git clone https://github.com/radxa/u-boot.git -b v2017.09-rockchip u-boot
           cd u-boot
           git submodule update --init --recursive
-
-      - name: Setup DTS and Config
-        run: |
-          cd u-boot
-          cp "$GITHUB_WORKSPACE/rk3188-sangfor-adesk.dts" arch/arm/dts/rk3188-sangfor-adesk.dts
-          echo "" >> arch/arm/dts/Makefile
-          echo "dtb-\$(CONFIG_ARCH_ROCKCHIP) += rk3188-sangfor-adesk.dtb" >> arch/arm/dts/Makefile
-          cp configs/rock_defconfig configs/rk3188_defconfig
-          sed -i 's/CONFIG_DEFAULT_DEVICE_TREE="rk3188-radxarock"/CONFIG_DEFAULT_DEVICE_TREE="rk3188-sangfor-adesk"/g' configs/rk3188_defconfig
 
       - name: Build U-Boot
         run: |
           cd u-boot
           export ARCH=arm
           export CROSS_COMPILE=arm-linux-gnueabi-
-          export KCFLAGS="-Wno-error"
-          export PATH=$PATH:$PWD/tools
-
-          # 彻底清理
-          make clean
-          make distclean
-          make mrproper
-
-          make rk3188_defconfig
-
-          # 开启 TPL 等关键选项
-          sed -i 's/^# CONFIG_TPL is not set/CONFIG_TPL=y/g' .config
-          sed -i 's/^# CONFIG_ROCKCHIP_RK3188 is not set/CONFIG_ROCKCHIP_RK3188=y/g' .config
-          sed -i 's/^# CONFIG_TARGET_ROCK is not set/CONFIG_TARGET_ROCK=y/g' .config
-          grep -q "^CONFIG_TPL=y" .config || echo "CONFIG_TPL=y" >> .config
-          grep -q "^CONFIG_ROCKCHIP_RK3188=y" .config || echo "CONFIG_ROCKCHIP_RK3188=y" >> .config
-          grep -q "^CONFIG_TARGET_ROCK=y" .config || echo "CONFIG_TARGET_ROCK=y" >> .config
-
-          # 禁用 of-platdata 和 WERROR
-          sed -i 's/^CONFIG_SPL_OF_PLATDATA=y/# CONFIG_SPL_OF_PLATDATA is not set/g' .config
-          sed -i 's/^CONFIG_TPL_OF_PLATDATA=y/# CONFIG_TPL_OF_PLATDATA is not set/g' .config
-          sed -i 's/^CONFIG_OF_PLATDATA=y/# CONFIG_OF_PLATDATA is not set/g' .config
-          grep -q "CONFIG_SPL_OF_PLATDATA" .config || echo "# CONFIG_SPL_OF_PLATDATA is not set" >> .config
-          grep -q "CONFIG_TPL_OF_PLATDATA" .config || echo "# CONFIG_TPL_OF_PLATDATA is not set" >> .config
-          grep -q "CONFIG_OF_PLATDATA" .config || echo "# CONFIG_OF_PLATDATA is not set" >> .config
-          sed -i 's/CONFIG_WERROR=y/# CONFIG_WERROR is not set/g' .config
-          echo "/* dummy file */" > drivers/serial/serial_rockchip.c
-
-          make olddefconfig
-
-          # ★★★ 最关键一步：直接修改 Makefile.spl 中的硬编码表达式，将其置为 0 ★★★
-          sed -i 's/CONFIG_SPL_SIZE_LIMIT = 0x8000 - 0x800/CONFIG_SPL_SIZE_LIMIT = 0/g' scripts/Makefile.spl
-          sed -i 's/CONFIG_TPL_SIZE_LIMIT = 0x8000 - 0x800/CONFIG_TPL_SIZE_LIMIT = 0/g' scripts/Makefile.spl
-          # 同时确保 .config 中也设置为 0
-          sed -i 's/^CONFIG_SPL_SIZE_LIMIT=.*/CONFIG_SPL_SIZE_LIMIT=0/g' .config
-          sed -i 's/^CONFIG_TPL_SIZE_LIMIT=.*/CONFIG_TPL_SIZE_LIMIT=0/g' .config
-
-          # 再次运行 olddefconfig 以确保配置一致，但之后要再次修改 Makefile.spl
-          make olddefconfig
-          sed -i 's/CONFIG_SPL_SIZE_LIMIT = 0x8000 - 0x800/CONFIG_SPL_SIZE_LIMIT = 0/g' scripts/Makefile.spl
-          sed -i 's/CONFIG_TPL_SIZE_LIMIT = 0x8000 - 0x800/CONFIG_TPL_SIZE_LIMIT = 0/g' scripts/Makefile.spl
-
-          make -j1
-
-          echo "================ 检查产物 ================"
-          ls -la tpl/u-boot-tpl.bin spl/u-boot-spl.bin u-boot.bin u-boot-dtb.bin 2>/dev/null || true
-          if [ ! -f tpl/u-boot-tpl.bin ]; then
-            echo "错误：TPL 仍未生成。"
-            grep "CONFIG_TPL" .config || true
-            exit 1
-          fi
-
-      - name: Package U-Boot
-        run: |
-          cd u-boot
-          echo "开始打包..."
-          if [ ! -f tools/boot_merger ]; then
-            wget -O tools/boot_merger https://raw.githubusercontent.com/rockchip-linux/rkbin/master/tools/boot_merger || true
-            chmod +x tools/boot_merger 2>/dev/null || true
-          fi
-
-          if [ -f tools/boot_merger ] && [ -f tpl/u-boot-tpl.bin ]; then
-            echo "使用 boot_merger 打包"
-            cat tpl/u-boot-tpl.bin > tplspl.bin
-            truncate -s 1020 tplspl.bin
-            printf 'RK31' | dd of=tplspl.bin bs=1 count=4 conv=notrunc
-            cat spl/u-boot-spl.bin >> tplspl.bin
-            truncate -s 2048 tplspl.bin
-
-            printf '[CHIP_NAME]\nNAME=RK31\n[VERSION]\nMAJOR=2\nMINOR=3\n[CODE471_OPTION]\nNUM=1\nPath1=tplspl.bin\nSleep=0\n[CODE472_OPTION]\nNUM=1\nPath1=u-boot-dtb.bin\nSleep=0\n[LOADER_OPTION]\nNUM=2\nLOADER1=FlashData\nLOADER2=FlashBoot\nFlashData=tplspl.bin\nFlashBoot=u-boot-dtb.bin\n[OUTPUT]\nPATH=RK3188Loader_miniall.bin\n' > /tmp/RK3188MINIALL.ini
-
-            ./tools/boot_merger --rc4 /tmp/RK3188MINIALL.ini
-            echo "RK3188Loader_miniall.bin 生成成功"
-          else
-            echo "打包失败：缺少 tpl/u-boot-tpl.bin 或 boot_merger 工具"
-            exit 1
-          fi
-
-          if [ -f u-boot-dtb.bin ]; then
-            ./tools/mkimage -n rk3188 -T rksd -d u-boot-dtb.bin uboot.img
-            echo "uboot.img 生成成功"
-          else
-            echo "u-boot-dtb.bin 不存在，无法生成 uboot.img"
-          fi
-
-          echo "最终产物列表："
-          ls -la RK3188Loader_miniall.bin uboot.img u-boot.bin 2>/dev/null || true
+          make rock_defconfig
+          make -j$(nproc)
+          # 尝试生成 Loader
+          ls -la u-boot.bin spl/u-boot-spl.bin tpl/u-boot-tpl.bin 2>/dev/null || true
 
       - name: Upload Artifacts
         uses: actions/upload-artifact@v4
         with:
-          name: rk3188-uboot-package
+          name: radxa-uboot-binaries
           path: |
-            u-boot/RK3188Loader_miniall.bin
-            u-boot/uboot.img
             u-boot/u-boot.bin
-            u-boot/u-boot-dtb.bin
-          if-no-files-found: warn
+            u-boot/spl/u-boot-spl.bin
+            u-boot/tpl/u-boot-tpl.bin
