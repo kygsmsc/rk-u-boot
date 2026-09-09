@@ -62,7 +62,7 @@ jobs:
           grep -q "^CONFIG_ROCKCHIP_RK3188=y" .config || echo "CONFIG_ROCKCHIP_RK3188=y" >> .config
           grep -q "^CONFIG_TARGET_ROCK=y" .config || echo "CONFIG_TARGET_ROCK=y" >> .config
 
-          # 彻底禁用 of-platdata（只修改配置，不删除任何 Makefile 行）
+          # 彻底禁用 of-platdata
           sed -i 's/^CONFIG_SPL_OF_PLATDATA=y/# CONFIG_SPL_OF_PLATDATA is not set/g' .config
           sed -i 's/^CONFIG_TPL_OF_PLATDATA=y/# CONFIG_TPL_OF_PLATDATA is not set/g' .config
           sed -i 's/^CONFIG_OF_PLATDATA=y/# CONFIG_OF_PLATDATA is not set/g' .config
@@ -70,28 +70,29 @@ jobs:
           grep -q "CONFIG_TPL_OF_PLATDATA" .config || echo "# CONFIG_TPL_OF_PLATDATA is not set" >> .config
           grep -q "CONFIG_OF_PLATDATA" .config || echo "# CONFIG_OF_PLATDATA is not set" >> .config
 
-          # 禁用警告即错误，并清理旧串口驱动
+          # 禁用警告即错误
           sed -i 's/CONFIG_WERROR=y/# CONFIG_WERROR is not set/g' .config
           echo "/* dummy file */" > drivers/serial/serial_rockchip.c
 
-          # 恢复被破坏的 Makefile.spl（关键！）
+          # 【核心修复】恢复原始 Makefile.spl 结构，然后精确替换硬编码的大小限制公式
           git checkout -- scripts/Makefile.spl
+          # 将 `CONFIG_SPL_SIZE_LIMIT = 0x8000 - 0x800` 替换为 `CONFIG_SPL_SIZE_LIMIT = 0`
+          sed -i 's/CONFIG_SPL_SIZE_LIMIT = 0x8000 - 0x800/CONFIG_SPL_SIZE_LIMIT = 0/g' scripts/Makefile.spl
+          # 同样处理 TPL 可能存在的公式
+          sed -i 's/CONFIG_TPL_SIZE_LIMIT = 0x8000 - 0x800/CONFIG_TPL_SIZE_LIMIT = 0/g' scripts/Makefile.spl
 
-          # 只设置大小限制为0，不删除任何行
-          sed -i 's/^CONFIG_SPL_SIZE_LIMIT=.*/CONFIG_SPL_SIZE_LIMIT=0/g' .config
-          sed -i 's/^CONFIG_TPL_SIZE_LIMIT=.*/CONFIG_TPL_SIZE_LIMIT=0/g' .config
+          # 确保 .config 中的限制也为 0
           sed -i 's/^CONFIG_SPL_SIZE_LIMIT=.*/CONFIG_SPL_SIZE_LIMIT=0/g' .config
           sed -i 's/^CONFIG_TPL_SIZE_LIMIT=.*/CONFIG_TPL_SIZE_LIMIT=0/g' .config
 
           make olddefconfig
 
-          # olddefconfig 后再次强制禁用 of-platdata 和设置大小限制
+          # olddefconfig 后再次强制设置
           sed -i 's/^CONFIG_SPL_OF_PLATDATA=y/# CONFIG_SPL_OF_PLATDATA is not set/g' .config
           sed -i 's/^CONFIG_TPL_OF_PLATDATA=y/# CONFIG_TPL_OF_PLATDATA is not set/g' .config
           sed -i 's/^CONFIG_OF_PLATDATA=y/# CONFIG_OF_PLATDATA is not set/g' .config
           sed -i 's/^CONFIG_SPL_SIZE_LIMIT=.*/CONFIG_SPL_SIZE_LIMIT=0/g' .config
           sed -i 's/^CONFIG_TPL_SIZE_LIMIT=.*/CONFIG_TPL_SIZE_LIMIT=0/g' .config
-          sed -i 's/^CONFIG_TPL=y/CONFIG_TPL=y/g' .config
 
           make -j1
 
