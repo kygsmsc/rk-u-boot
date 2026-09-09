@@ -54,63 +54,73 @@ jobs:
           make clean
           make rk3188_defconfig
 
-          # 精简配置（注意：不要禁用 TPL，RK3188 必须有 TPL）
+          # 裁剪不需要的组件，禁用警告即错误
           sed -i 's/^CONFIG_SPL_PINCTRL=y/# CONFIG_SPL_PINCTRL is not set/g' .config
           sed -i 's/^CONFIG_SPL_OF_PLATDATA=y/# CONFIG_SPL_OF_PLATDATA is not set/g' .config
-          # 移除了禁用 TPL 的 sed 命令！RK3188 必须保留 TPL。
-          sed -i 's/^CONFIG_TPL_OF_PLATDATA=y/# CONFIG_TPL_OF_PLATDATA is not set/g' .config
           sed -i 's/CONFIG_WERROR=y/# CONFIG_WERROR is not set/g' .config
           echo "/* dummy file */" > drivers/serial/serial_rockchip.c
 
-          # 删除 Makefile 中的大小限制计算
+          # 移除大小限制导致的报错
           sed -i '/limit = /d' scripts/Makefile.spl
           sed -i '/printf "%d"/d' scripts/Makefile.spl
-
-          # 禁用 SPL 和 TPL 的大小检查
           sed -i 's/^CONFIG_SPL_SIZE_LIMIT=.*/CONFIG_SPL_SIZE_LIMIT=0/g' .config
+
+          # 【核心修复】强制开启 RK3188 启动所需的 TPL 支持
+          # 移除所有对 CONFIG_TPL 的禁用，并确保关键配置存在
+          sed -i 's/^# CONFIG_TPL is not set/CONFIG_TPL=y/g' .config
+          sed -i 's/^# CONFIG_ROCKCHIP_BROM_HELPER is not set/CONFIG_ROCKCHIP_BROM_HELPER=y/g' .config
+          sed -i 's/^# CONFIG_ROCKCHIP_SPL_BACK_TO_BROM is not set/CONFIG_ROCKCHIP_SPL_BACK_TO_BROM=y/g' .config
+          sed -i 's/^# CONFIG_TPL_ROCKCHIP_BACK_TO_BROM is not set/CONFIG_TPL_ROCKCHIP_BACK_TO_BROM=y/g' .config
+          sed -i 's/^# CONFIG_TPL_SERIAL_SUPPORT is not set/CONFIG_TPL_SERIAL_SUPPORT=y/g' .config
+          sed -i 's/^# CONFIG_TPL_LIBCOMMON_SUPPORT is not set/CONFIG_TPL_LIBCOMMON_SUPPORT=y/g' .config
+          sed -i 's/^# CONFIG_TPL_LIBGENERIC_SUPPORT is not set/CONFIG_TPL_LIBGENERIC_SUPPORT=y/g' .config
+
+          # 强制禁用 TPL 大小限制（防止 TPL 超过 1KB 限制）
           sed -i 's/^CONFIG_TPL_SIZE_LIMIT=.*/CONFIG_TPL_SIZE_LIMIT=0/g' .config
 
           make olddefconfig
-          # olddefconfig 后再次强制设为 0
+
+          # 再次确认 TPL 已开启，并确保限制为 0
+          sed -i 's/^CONFIG_TPL=y/CONFIG_TPL=y/g' .config
           sed -i 's/^CONFIG_SPL_SIZE_LIMIT=.*/CONFIG_SPL_SIZE_LIMIT=0/g' .config
           sed -i 's/^CONFIG_TPL_SIZE_LIMIT=.*/CONFIG_TPL_SIZE_LIMIT=0/g' .config
 
-          make -j$(nproc)
+          # 【关键】使用 -j2 并行编译，防止因依赖缺失跳步导致 TPL 未生成
+          make -j2
 
-          echo "编译完成。检查产物："
+          echo "================ 检查 TPL 和 SPL 是否生成 ================"
           ls -la tpl/u-boot-tpl.bin spl/u-boot-spl.bin u-boot.bin u-boot-dtb.bin 2>/dev/null || true
+          if [ ! -f tpl/u-boot-tpl.bin ]; then
+            echo "Error: TPL 未生成！请检查 .config 中 CONFIG_TPL=y 是否生效。"
+            exit 1
+          fi
 
       - name: Package U-Boot
         run: |
           cd u-boot
           echo "开始打包..."
-          
-          # 查找 boot_merger 工具（尝试从 rkbin 下载）
           if [ ! -f tools/boot_merger ]; then
-            echo "未找到 boot_merger，尝试从 rkbin 下载"
             wget -O tools/boot_merger https://raw.githubusercontent.com/rockchip-linux/rkbin/master/tools/boot_merger || true
             chmod +x tools/boot_merger 2>/dev/null || true
           fi
 
-          if [ -f tools/boot_merger ]; then
+          if [ -f tools/boot_merger ] && [ -f tpl/u-boot-tpl.bin ]; then
             echo "使用 boot_merger 打包"
-            # 构造 TPL+SPL 数据（必须先有 tpl/u-boot-tpl.bin）
             cat tpl/u-boot-tpl.bin > tplspl.bin
             truncate -s 1020 tplspl.bin
             printf 'RK31' | dd of=tplspl.bin bs=1 count=4 conv=notrunc
             cat spl/u-boot-spl.bin >> tplspl.bin
             truncate -s 2048 tplspl.bin
 
-            # 创建 RK3188MINIALL.ini（用 printf 避免 YAML 问题）
             printf '[CHIP_NAME]\nNAME=RK31\n[VERSION]\nMAJOR=2\nMINOR=3\n[CODE471_OPTION]\nNUM=1\nPath1=tplspl.bin\nSleep=0\n[CODE472_OPTION]\nNUM=1\nPath1=u-boot-dtb.bin\nSleep=0\n[LOADER_OPTION]\nNUM=2\nLOADER1=FlashData\nLOADER2=FlashBoot\nFlashData=tplspl.bin\nFlashBoot=u-boot-dtb.bin\n[OUTPUT]\nPATH=RK3188Loader_miniall.bin\n' > /tmp/RK3188MINIALL.ini
 
             ./tools/boot_merger --rc4 /tmp/RK3188MINIALL.ini
             echo "RK3188Loader_miniall.bin 生成成功"
           else
-            echo "boot_merger 不可用，无法生成完整 Loader。请手动使用 rkdeveloptool 或 dd 写入。"
+            echo "打包失败：缺少 tpl/u-boot-tpl.bin 或 boot_merger 工具"
+            exit 1
           fi
 
-          # 生成 uboot.img
           if [ -f u-boot-dtb.bin ]; then
             ./tools/mkimage -n rk3188 -T rksd -d u-boot-dtb.bin uboot.img
             echo "uboot.img 生成成功"
