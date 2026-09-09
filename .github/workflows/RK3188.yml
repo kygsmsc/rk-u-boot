@@ -31,6 +31,68 @@ jobs:
         run: |
           git clone --depth 1 --recursive https://github.com/rockchip-linux/u-boot.git
 
+      - name: Build U-Boot for RK3188 (rock config)
+        run: |
+          cd u-boot
+          # 设置 rkbin 目录为子模块所在位置
+          export RKBIN_DIR=$PWD/rkbin
+          # 使用 rock 配置（Radxa Rock，基于 RK3188）
+          ./make.sh rock
+
+      - name: List generated files
+        run: |
+          echo "Generated files in u-boot/:"
+          ls -l u-boot/*.bin u-boot/*.img 2>/dev/null || echo "No files in root"
+          echo "Checking rockdev/ directory:"
+          ls -l u-boot/rockdev/ 2>/dev/null || echo "No rockdev directory"
+
+      - name: Prepare artifacts
+        run: |
+          mkdir -p uboot-output
+          # 复制可能产生的文件
+          cp u-boot/*_loader_*.bin uboot-output/ 2>/dev/null || echo "No loader bin"
+          cp u-boot/uboot.img uboot-output/ 2>/dev/null || echo "No uboot.img"
+          cp u-boot/trust.img uboot-output/ 2>/dev/null || echo "No trust.img"
+          # 有时输出在 rockdev/
+          cp u-boot/rockdev/*.img uboot-output/ 2>/dev/null || echo "No rockdev images"
+
+      - name: Upload artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: rk3188-uboot
+          path: uboot-output/name: Build U-Boot for RK3188
+
+on:
+  push:
+    branches: [ main, master ]
+  pull_request:
+    branches: [ main, master ]
+  workflow_dispatch:
+
+jobs:
+  build-uboot:
+    runs-on: ubuntu-22.04
+    steps:
+      - name: Install dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            gcc-arm-linux-gnueabi \
+            device-tree-compiler \
+            bc \
+            bison \
+            flex \
+            libssl-dev \
+            libncurses-dev \
+            u-boot-tools \
+            cpio \
+            git \
+            wget
+
+      - name: Clone Rockchip U-Boot (with submodules)
+        run: |
+          git clone --depth 1 --recursive https://github.com/rockchip-linux/u-boot.git
+
       - name: Build U-Boot for RK3188
         run: |
           cd u-boot
