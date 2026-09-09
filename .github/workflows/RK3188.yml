@@ -1,4 +1,4 @@
-name: Build U-Boot for RK3188 (with Linaro GCC 7.5)
+name: Build U-Boot for RK3188
 
 on:
   push:
@@ -9,12 +9,13 @@ on:
 
 jobs:
   build-uboot:
-    runs-on: ubuntu-22.04
+    runs-on: ubuntu-20.04   # 改用 20.04
     steps:
-      - name: Install dependencies (excluding gcc-7)
+      - name: Install dependencies
         run: |
           sudo apt-get update
           sudo apt-get install -y \
+            gcc-arm-linux-gnueabihf \
             device-tree-compiler \
             bc \
             bison \
@@ -25,26 +26,14 @@ jobs:
             cpio \
             git \
             wget \
-            xz-utils \
             python3 \
             python3-pyelftools
-
-      - name: Download and setup Linaro GCC 7.5 toolchain
-        run: |
-          # 下载 Linaro 7.5.0 2019.12 (支持 armv5)
-          wget -q https://releases.linaro.org/components/toolchain/binaries/7.5-2019.12/arm-linux-gnueabihf/gcc-linaro-7.5.0-2019.12-x86_64_arm-linux-gnueabihf.tar.xz
-          # 解压到当前目录
-          tar -xf gcc-linaro-7.5.0-2019.12-x86_64_arm-linux-gnueabihf.tar.xz
-          # 将 bin 目录添加到 PATH
-          echo "$PWD/gcc-linaro-7.5.0-2019.12-x86_64_arm-linux-gnueabihf/bin" >> $GITHUB_PATH
-          # 设置环境变量供后续步骤使用
-          echo "CROSS_COMPILE=arm-linux-gnueabihf-" >> $GITHUB_ENV
 
       - name: Clone Rockchip U-Boot
         run: |
           git clone --depth 1 https://github.com/rockchip-linux/u-boot.git
 
-      - name: Clone rkbin (optional, for reference)
+      - name: Clone rkbin (optional)
         run: |
           git clone --depth 1 https://github.com/rockchip-linux/rkbin.git
 
@@ -53,15 +42,15 @@ jobs:
           cd u-boot
           # 配置
           make rock_defconfig CROSS_COMPILE=arm-linux-gnueabihf-
-          # 修改架构为 ARMv7 (Cortex-A9) 以获得更好性能，但 GCC 7 也能处理 ARMv5
+          # 可选：将架构强制改为 ARMv7（但 GCC 9 也支持 armv5，所以不强制也可以）
           sed -i 's/CONFIG_ARM_ARCH=5/CONFIG_ARM_ARCH=7/' .config
           echo "CONFIG_CPU_V7=y" >> .config
-          # 编译
+          # 编译（禁用 -Werror 以防警告中断）
           make CROSS_COMPILE=arm-linux-gnueabihf- \
                KCFLAGS="-Wno-error" \
                KBUILD_CFLAGS="-Wno-error" \
                -j$(nproc)
-          # 打包为 Rockchip 格式 (uboot.img)
+          # 打包成 Rockchip 格式
           tools/mkimage -n rk3188 -T rksd -d spl/u-boot-spl.bin u-boot.img
           cat u-boot.bin >> u-boot.img
 
@@ -87,5 +76,5 @@ jobs:
       - name: Upload artifacts
         uses: actions/upload-artifact@v4
         with:
-          name: rk3188-uboot-linaro
+          name: rk3188-uboot
           path: uboot-output/
